@@ -15,6 +15,8 @@ import type {
 const HERO_SMS_DEFAULT_BASE_URL = "https://hero-sms.com/stubs/handler_api.php";
 const HERO_SMS_DEFAULT_POLL_ATTEMPTS = 24;
 const HERO_SMS_DEFAULT_POLL_INTERVAL_MS = 5000;
+const HERO_SMS_DEFAULT_NETWORK_RETRY_COUNT = 2;
+const HERO_SMS_DEFAULT_NETWORK_RETRY_DELAY_MS = 500;
 const HERO_SMS_CODE_PATTERN = /(?<!\d)(\d{4,8})(?!\d)/;
 
 interface DeliveredActivationSnapshot {
@@ -213,6 +215,54 @@ async function heroSmsFetch(
   } satisfies UndiciRequestInit);
 }
 
+export function isRetryableHeroSmsNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const cause = (error as Error & {cause?: unknown}).cause as {
+    code?: unknown;
+    message?: unknown;
+  } | undefined;
+  const code = String(cause?.code ?? "").trim().toUpperCase();
+  const message = String(error.message ?? "").toLowerCase();
+  const causeMessage = String(cause?.message ?? "").toLowerCase();
+
+  return (
+    ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "UND_ERR_CONNECT_TIMEOUT"].includes(code) ||
+    message.includes("fetch failed") ||
+    causeMessage.includes("client network socket disconnected") ||
+    causeMessage.includes("secure tls connection") ||
+    causeMessage.includes("socket hang up")
+  );
+}
+
+export async function withHeroSmsTransientRetry<T>(
+  operation: () => Promise<T>,
+  options: {retries?: number; delayMs?: number} = {},
+): Promise<T> {
+  const retries = options.retries ?? HERO_SMS_DEFAULT_NETWORK_RETRY_COUNT;
+  const delayMs = options.delayMs ?? HERO_SMS_DEFAULT_NETWORK_RETRY_DELAY_MS;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableHeroSmsNetworkError(error) || attempt === retries) {
+        throw error;
+      }
+      console.log(
+        `[heroSMS] 网络抖动，准备第 ${attempt + 2}/${retries + 1} 次请求重试: ${String(error instanceof Error ? error.message : error)}`,
+      );
+      await delay(delayMs);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("HeroSMS 网络请求失败");
+}
+
 function normalizeListValue(value?: string | string[]): string | undefined {
   if (Array.isArray(value)) {
     const items = value.map((item) => String(item).trim()).filter(Boolean);
@@ -357,12 +407,14 @@ async function requestHeroSmsApi(
     setOptionalQuery(url.searchParams, key, value);
   }
 
-  const response = await heroSmsFetch(config, url, {
-    method: "GET",
-    headers: {
-      Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
-    },
-  });
+  const response = await withHeroSmsTransientRetry(() =>
+    heroSmsFetch(config, url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+      },
+    }),
+  );
 
   const payload = await readResponseBody(response);
 
