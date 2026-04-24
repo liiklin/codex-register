@@ -241,6 +241,46 @@ export class OpenAIClient {
         console.log(`[${current}/${total}] ${message}`);
     }
 
+    private isPhoneMaxUsageExceededError(error: unknown): boolean {
+        return String(error instanceof Error ? error.message : error)
+            .includes("phone_max_usage_exceed");
+    }
+
+    private async requestPhoneOtpWithRetry(progress: {current: number | string; total: number}) {
+        if (!this.smsBroker) {
+            throw new Error("未配置 SMS provider，无法进行短信验证");
+        }
+
+        let lease = await this.smsBroker.getActivation();
+
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+            const phoneNumber = `+${lease.phoneNumber}`;
+            if (attempt > 1) {
+                console.log(`[add-phone] 第 ${attempt} 次发送短信验证码，已切换号码 phone=${phoneNumber}`);
+            }
+            this.logProgress(progress.current, progress.total, `发送短信验证码，phone=${phoneNumber}`);
+
+            try {
+                const continueURL = await this.sendPhoneOtp(phoneNumber);
+                return {
+                    continueURL,
+                    lease,
+                };
+            } catch (error) {
+                if (!this.isPhoneMaxUsageExceededError(error) || attempt === 2) {
+                    throw error;
+                }
+
+                console.log(`[add-phone] 号码 ${phoneNumber} 触发 phone_max_usage_exceed，准备轮换新号码重试`);
+                await this.smsBroker.markAsFailed(true);
+                lease = await this.smsBroker.getActivation();
+                console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
+            }
+        }
+
+        throw new Error("发送短信验证码失败");
+    }
+
     async authLoginHTTP(): Promise<AuthLoginResult> {
         const totalSteps = 6;
         this.logProgress(1, totalSteps, "打开登录授权页");
@@ -301,18 +341,11 @@ export class OpenAIClient {
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
             this.logProgress('4-a', totalSteps, "进入短信验证流程，从接码平台获取号码");
-            if (!this.smsBroker) {
-                throw new Error("未配置 SMS provider，无法进行短信验证");
-            }
-            const lease = await this.smsBroker.getActivation();
-            this.logProgress('4-b', totalSteps, `发送短信验证码，phone=+${lease.phoneNumber}`);
-            const phoneNumber = `+${lease.phoneNumber}`
-            continueURL = await this.sendPhoneOtp(phoneNumber)
-              // sendPhoneOtp 过程中可能遇到 phone_max_usage_exceed 错误，需要手动标记失败并进行轮换
-              .catch(async (e) => {
-                  await this.smsBroker?.markAsFailed(true)
-                  throw e
-              });
+            const {continueURL: nextContinueURL, lease} = await this.requestPhoneOtpWithRetry({
+                current: '4-b',
+                total: totalSteps,
+            });
+            continueURL = nextContinueURL;
             this.logProgress('4-c', totalSteps, `等待短信验证码`);
             const { code } = await lease.waitForVerificationCode();
             this.logProgress('4-d', totalSteps, `提交短信验证，code=[${code}]`);
@@ -426,19 +459,10 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
-            if (!this.smsBroker) {
-                throw new Error("未配置 SMS provider，无法进行短信验证");
-            }
             this.logProgress(step++, totalSteps++, "进入短信验证流程，从接码平台获取号码");
-            const lease = await this.smsBroker.getActivation();
-            this.logProgress(step++, totalSteps++, `发送短信验证码，phone=+${lease.phoneNumber}`);
-            const phoneNumber = `+${lease.phoneNumber}`
-            continueURL = await this.sendPhoneOtp(phoneNumber)
-              // sendPhoneOtp 过程中可能遇到 phone_max_usage_exceed 错误，需要手动标记失败并进行轮换
-              .catch(async (e) => {
-                  await this.smsBroker?.markAsFailed(true)
-                  throw e
-              });
+            const sendStep = {current: step++, total: totalSteps++};
+            const {continueURL: nextContinueURL, lease} = await this.requestPhoneOtpWithRetry(sendStep);
+            continueURL = nextContinueURL;
             this.logProgress(step++, totalSteps++, `等待短信验证码`);
             const { code } = await lease.waitForVerificationCode();
             this.logProgress(step++, totalSteps++, `提交短信验证，code=[${code}]`);

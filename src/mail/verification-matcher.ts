@@ -28,13 +28,17 @@ function extractVerificationCode(text: string): string {
         return "";
     }
 
-    const directMatch = raw.match(/\b(\d{6})\b/);
+    const plainText = raw
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+        .replace(/<[^>]+>/g, " ");
+
+    const directMatch = plainText.match(/\b(\d{6})\b/);
     if (directMatch?.[1]) {
         return directMatch[1];
     }
 
-    const compactMatch = raw
-        .replace(/<[^>]+>/g, " ")
+    const compactMatch = plainText
         .match(/(?:^|[^\d])((?:\d[\s-]*){6})(?:[^\d]|$)/);
     if (!compactMatch?.[1]) {
         return "";

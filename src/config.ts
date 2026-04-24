@@ -19,6 +19,7 @@ interface AppConfigFile {
     defaultProxyUrl?: unknown;
     heroSMSApiKey?: unknown;
     heroSMSCountry?: unknown;
+    heroSMSCountries?: unknown;
     heroSMSMaxPrice?: unknown;
     heroSMSPollAttempts?: unknown;
     heroSMSPollIntervalMs?: unknown;
@@ -43,6 +44,7 @@ export interface AppConfig {
     defaultProxyUrl: string;
     heroSMSApiKey?: string;
     heroSMSCountry: number;
+    heroSMSCountries: number[];
     heroSMSMaxPrice: number;
     heroSMSPollAttempts: number;
     heroSMSPollIntervalMs: number;
@@ -67,6 +69,7 @@ const DEFAULT_CONFIG: AppConfig = {
     defaultProxyUrl: "http://127.0.0.1:10808",
     heroSMSApiKey: undefined,
     heroSMSCountry: 52,
+    heroSMSCountries: [],
     heroSMSMaxPrice: 0.05,
     heroSMSPollAttempts: 10,
     heroSMSPollIntervalMs: 3000,
@@ -80,6 +83,17 @@ function normalizeNumber(value: unknown, fallback: number): number {
         return fallback;
     }
     return value;
+}
+
+function normalizeNumberList(value: unknown): number[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map((item) => Number(item))
+        .filter((item) => Number.isFinite(item))
+        .map((item) => Math.trunc(item));
 }
 
 function normalizeProvider(value: unknown): MailProviderName {
@@ -170,6 +184,7 @@ function loadConfig(): AppConfig {
           typeof parsed.heroSMSCountry === "number"
             ? parsed.heroSMSCountry
             : DEFAULT_CONFIG.heroSMSCountry,
+        heroSMSCountries: normalizeNumberList(parsed.heroSMSCountries),
         heroSMSMaxPrice:
           typeof parsed.heroSMSMaxPrice === "number"
             ? parsed.heroSMSMaxPrice

@@ -15,6 +15,7 @@
   "cloudflareApiKey": "",
   "heroSMSApiKey": "",
   "heroSMSCountry": 52,
+  "heroSMSCountries": [6, 44],
   "heroSMSMaxPrice": 0.05,
   "heroSMSPollAttempts": 10,
   "heroSMSPollIntervalMs": 3000,

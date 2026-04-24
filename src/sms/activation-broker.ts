@@ -3,6 +3,7 @@ import type {
   SmsProvider,
   SmsVerificationCode,
 } from "./provider.js";
+import {HeroSmsWaitTimeoutError} from "./heroSMS.js";
 
 const ACTIVATION_CANCEL_AND_WITHDRAW_MIN_AGE_MS = 2 * 60 * 1000;
 
@@ -196,11 +197,16 @@ export class ActivationBroker<
     await this.finishAttempt("success");
   }
 
-  async markAsFailed(rotate?: boolean): Promise<void> {
+  async markAsFailed(
+    rotate?: boolean,
+  ): Promise<void> {
     await this.finishAttempt("failed", rotate);
   }
 
-  private async finishAttempt(outcome: ActivationAttemptOutcome, rotate?: boolean): Promise<void> {
+  private async finishAttempt(
+    outcome: ActivationAttemptOutcome,
+    rotate?: boolean,
+  ): Promise<void> {
     const activation = this.currentActivation;
     if (!activation || !this.usage) {
       throw new Error("当前没有可结束的 activation");
@@ -243,7 +249,9 @@ export class ActivationBroker<
     this.needsAnotherSms = true;
   }
 
-  async rotateActivation(outcome: ActivationAttemptOutcome) {
+  async rotateActivation(
+      outcome: ActivationAttemptOutcome,
+  ) {
       const activation = this.currentActivation!;
       const usage = this.usage!;
       // Release rule:
@@ -385,7 +393,7 @@ export class ActivationBroker<
             rawStatus: verification.rawStatus,
           };
         } catch (e) {
-          await this.markAsFailed();
+          await this.markAsFailed(e instanceof HeroSmsWaitTimeoutError);
           throw e;
         }
       },

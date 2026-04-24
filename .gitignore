@@ -8,3 +8,7 @@ config.json
 2925-account.json
 proxiedmail-account.json
 2925-session.json
+countries.json
+pnpm-lock.yaml
+.serena
+*.test.ts

@@ -30,7 +30,8 @@ const smsBroker = appConfig.heroSMSApiKey ? createSMSBroker({
     pollAttempts: appConfig.heroSMSPollAttempts,
     pollIntervalMs: appConfig.heroSMSPollIntervalMs,
     maxPrice: appConfig.heroSMSMaxPrice,
-    country: appConfig.heroSMSCountry
+    country: appConfig.heroSMSCountry,
+    countries: appConfig.heroSMSCountries,
 }) : undefined
 
 async function runOnce(): Promise<void> {

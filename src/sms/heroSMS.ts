@@ -53,6 +53,7 @@ export interface HeroSmsProviderConfig {
 export interface HeroSmsNumberRequestOptions {
   service: string;
   country: number;
+  fallbackCountries?: number[];
   operator?: string | string[];
   maxPrice?: number;
   fixedPrice?: boolean;
@@ -390,6 +391,74 @@ function ensureCountryConfigured(options: HeroSmsNumberRequestOptions): number {
     throw new Error("HeroSMS country 未配置或格式不正确");
   }
   return country;
+}
+
+export class HeroSmsWaitTimeoutError extends Error {
+  readonly activationId: string;
+  readonly lastStatus: unknown;
+
+  constructor(activationId: string, lastStatus: unknown) {
+    super(
+      `HeroSMS 长时间未收到验证码: activationId=${activationId} lastStatus=${formatPayload(lastStatus)}`,
+    );
+    this.name = "HeroSmsWaitTimeoutError";
+    this.activationId = activationId;
+    this.lastStatus = lastStatus;
+  }
+}
+
+function normalizeCountryCandidates(value?: number[]): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.trunc(item));
+}
+
+export function buildCountryAttemptOrder(
+  options: HeroSmsNumberRequestOptions,
+): number[] {
+  return [
+    ensureCountryConfigured(options),
+    ...normalizeCountryCandidates(options.fallbackCountries),
+  ].filter((country, index, list) => list.indexOf(country) === index);
+}
+
+export function isNoNumbersApiError(error: unknown): error is HeroSmsApiError {
+  if (!(error instanceof HeroSmsApiError)) {
+    return false;
+  }
+
+  if (error.action !== "getNumberV2") {
+    return false;
+  }
+
+  if (!isRecord(error.payload)) {
+    return false;
+  }
+
+  return String(error.payload.title ?? "").trim().toUpperCase() === "NO_NUMBERS";
+}
+
+async function requestPhoneNumberForCountry(
+  config: HeroSmsProviderConfig,
+  options: HeroSmsNumberRequestOptions,
+  country: number,
+): Promise<HeroSmsActivation> {
+  const payload = await requestHeroSmsApi(config, "getNumberV2", {
+    service: ensureServiceConfigured(options),
+    country,
+    operator: normalizeListValue(options.operator),
+    maxPrice: options.maxPrice,
+    fixedPrice: options.fixedPrice,
+    ref: options.ref,
+    phoneException: normalizeListValue(options.phoneException),
+  });
+
+  return normalizeActivation(payload);
 }
 
 function normalizeActivationId(activationId: string | number): string {
@@ -742,17 +811,29 @@ export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
     async requestPhoneNumber(
       options: HeroSmsNumberRequestOptions,
     ): Promise<HeroSmsActivation> {
-      const payload = await requestHeroSmsApi(config, "getNumberV2", {
-        service: ensureServiceConfigured(options),
-        country: ensureCountryConfigured(options),
-        operator: normalizeListValue(options.operator),
-        maxPrice: options.maxPrice,
-        fixedPrice: options.fixedPrice,
-        ref: options.ref,
-        phoneException: normalizeListValue(options.phoneException),
-      });
+      const countries = buildCountryAttemptOrder(options);
+      let lastError: unknown = null;
 
-      return normalizeActivation(payload);
+      for (let index = 0; index < countries.length; index += 1) {
+        const country = countries[index];
+        try {
+          if (index > 0) {
+            console.log(
+              `[heroSMS] 主国家无号，降级尝试候选国家 country=${country} (${index + 1}/${countries.length})`,
+            );
+          }
+          return await requestPhoneNumberForCountry(config, options, country);
+        } catch (error) {
+          lastError = error;
+          if (!isNoNumbersApiError(error) || index === countries.length - 1) {
+            throw error;
+          }
+        }
+      }
+
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("HeroSMS 请求号码失败");
     },
 
     async markActivationReady(activationId: string | number): Promise<string> {
@@ -915,9 +996,7 @@ export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
           await delay(pollIntervalMs);
         }
       }
-      throw new Error(
-        `HeroSMS 长时间未收到验证码: activationId=${normalizedActivationId} lastStatus=${formatPayload(lastStatus)}`,
-      );
+      throw new HeroSmsWaitTimeoutError(normalizedActivationId, lastStatus);
     },
   };
 

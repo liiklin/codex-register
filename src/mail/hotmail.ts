@@ -324,6 +324,8 @@ function normalizeMessage(message, folderId) {
 }
 
 async function listFolderMessages(account, folderId) {
+    await ensureFreshAccount(account);
+
     const apiMode = account.apiMode ?? resolveApiMode(account);
     const isRest = apiMode === "rest";
     const url = new URL(
