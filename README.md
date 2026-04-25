@@ -81,6 +81,7 @@ npm run start
 ```bash
 npm run check
 npm run check:cpa
+npm run check:cpatools
 ```
 
 ---
@@ -147,13 +148,14 @@ npm run dev -- --email your_mail@example.com --sign
 
 ---
 
-## 状态及剩余额度检查：`npm run check` / `npm run check:cpa`
+## 状态及剩余额度检查：`npm run check` / `npm run check:cpa` / `npm run check:cpatools`
 
 批量检查 `auth` 目录里的授权文件额度。
 
 ```bash
 npm run check -- [参数]
 npm run check:cpa -- [参数]
+npm run check:cpatools -- [参数]
 ```
 
 ### 参数
@@ -174,6 +176,8 @@ npm run check:cpa -- [参数]
     - 并发检查数量
 - `--cpa`
     - 从 CLIProxyAPI 的 `auth-files` 里读取并检查 auth（`npm run check:cpa` 已内置）
+- `--cpatools`
+    - 从 CPAtools 管理端读取 codex 账号并检查有效性（`npm run check:cpatools` 已内置）
 
 ### 示例
 
@@ -186,6 +190,8 @@ npm run check -- --refresh --table
 npm run check -- --proxy http://127.0.0.1:7890 --table
 npm run check:cpa
 npm run check:cpa -- --refresh --limit 20 -c 8
+npm run check:cpatools
+npm run check:cpatools -- --limit 50 -c 20 --table
 ```
 
 ### 输出说明
@@ -231,6 +237,40 @@ npm run check:cpa -- --refresh --limit 20 -c 8
   - `cliproxyApiBaseUrl`
   - `cliproxyApiManagementKey`
 - CPA 模式下的“移除”表示通过 API 删除远端 auth 文件，不会移动到本地 `auth/401/`
+
+### `check:cpatools` 说明
+
+`npm run check:cpatools` 会：
+
+- 从 CPAtools 的 `/v0/management/auth-files` 拉取账号列表
+- 只保留 `type=codex` 的账号，并可按 `provider` 过滤
+- 使用 `authIndex -> /v0/management/api-call -> https://chatgpt.com/backend-api/wham/usage` 探测账号是否可用
+- 复用当前项目现有的汇总输出、401 移除和额度统计逻辑
+- 命中需要移除的 401 凭证时，会直接通过 CPAtools 的 `auth-files` API 删除远端账号
+
+说明：
+
+- `check:cpatools` 依赖以下配置：
+  - `cliproxyApiBaseUrl`
+  - `cliproxyApiManagementKey`
+  - `cpatoolsProvider`（可选）
+  - `cpatoolsUserAgent`（可选）
+  - `cpatoolsChatgptAccountId`（可选）
+- `--refresh` 在 `check:cpatools` 模式下不会生效，因为 CPAtools 模式不是先下载 auth JSON 再本地 refresh，而是直接通过管理端代发 usage 探测
+- 如果 CPAtools 返回的是 `status_code` 或 `status`，当前适配层都会识别
+- CPAtools 模式下的“移除”表示通过 API 删除远端 auth，不会移动到本地 `auth/401/`
+
+`config.json` 示例：
+
+```json
+{
+  "cliproxyApiBaseUrl": "http://127.0.0.1:8317",
+  "cliproxyApiManagementKey": "your-management-key",
+  "cpatoolsProvider": "",
+  "cpatoolsUserAgent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+  "cpatoolsChatgptAccountId": ""
+}
+```
 
 ---
 
