@@ -21,5 +21,8 @@
   "heroSMSPollIntervalMs": 3000,
   "cliproxyApiAutoUploadAuth": false,
   "cliproxyApiBaseUrl": "http://localhost:8317",
-  "cliproxyApiManagementKey": ""
+  "cliproxyApiManagementKey": "",
+  "cpatoolsProvider": "",
+  "cpatoolsUserAgent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+  "cpatoolsChatgptAccountId": ""
 }

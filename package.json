@@ -10,6 +10,7 @@
     "start": "node bundle/index.cjs",
     "check": "node bundle/check-auth-quota.cjs",
     "check:cpa": "node bundle/check-auth-quota.cjs --cpa",
+    "check:cpatools": "node bundle/check-auth-quota.cjs --cpatools",
     "batch": "node bundle/batch-register.cjs"
   },
   "dependencies": {

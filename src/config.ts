@@ -26,6 +26,9 @@ interface AppConfigFile {
     cliproxyApiAutoUploadAuth?: unknown;
     cliproxyApiBaseUrl?: unknown;
     cliproxyApiManagementKey?: unknown;
+    cpatoolsProvider?: unknown;
+    cpatoolsUserAgent?: unknown;
+    cpatoolsChatgptAccountId?: unknown;
 }
 
 export interface AppConfig {
@@ -51,6 +54,9 @@ export interface AppConfig {
     cliproxyApiAutoUploadAuth: boolean;
     cliproxyApiBaseUrl: string;
     cliproxyApiManagementKey: string;
+    cpatoolsProvider: string;
+    cpatoolsUserAgent: string;
+    cpatoolsChatgptAccountId: string;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -76,6 +82,9 @@ const DEFAULT_CONFIG: AppConfig = {
     cliproxyApiAutoUploadAuth: false,
     cliproxyApiBaseUrl: "http://localhost:8317",
     cliproxyApiManagementKey: "",
+    cpatoolsProvider: "",
+    cpatoolsUserAgent: "",
+    cpatoolsChatgptAccountId: "",
 };
 
 function normalizeNumber(value: unknown, fallback: number): number {
@@ -209,6 +218,18 @@ function loadConfig(): AppConfig {
             typeof parsed.cliproxyApiManagementKey === "string"
                 ? parsed.cliproxyApiManagementKey.trim()
                 : DEFAULT_CONFIG.cliproxyApiManagementKey,
+        cpatoolsProvider:
+            typeof parsed.cpatoolsProvider === "string"
+                ? parsed.cpatoolsProvider.trim()
+                : DEFAULT_CONFIG.cpatoolsProvider,
+        cpatoolsUserAgent:
+            typeof parsed.cpatoolsUserAgent === "string"
+                ? parsed.cpatoolsUserAgent.trim()
+                : DEFAULT_CONFIG.cpatoolsUserAgent,
+        cpatoolsChatgptAccountId:
+            typeof parsed.cpatoolsChatgptAccountId === "string"
+                ? parsed.cpatoolsChatgptAccountId.trim()
+                : DEFAULT_CONFIG.cpatoolsChatgptAccountId,
     };
 }
 

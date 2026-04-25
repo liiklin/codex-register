@@ -10,6 +10,13 @@ import {
     setAuthFileDisabledStatusToCLIProxyAPI,
     type CLIProxyAuthFileItem,
 } from "./cliproxyapi.js";
+import {
+    deleteAuthFileFromCPATools,
+    listAuthFilesFromCPATools,
+    probeAuthFileFromCPATools,
+    resolveCPAToolsAuthIndex,
+    type CPAToolsAuthFileItem,
+} from "./cpatoolsapi.js";
 import {appConfig} from "./config.js";
 import {AUTH_OAUTH_TOKEN_URLS, DEFAULT_CLIENT_ID, DEFAULT_USER_AGENT} from "./constants.js";
 
@@ -86,11 +93,13 @@ interface AuthSummary {
 
 interface AuthTarget {
     filePath: string;
-    loadRecord: () => Promise<AuthRecord>;
-    saveRecord: (record: AuthRecord) => Promise<void>;
+    loadRecord?: () => Promise<AuthRecord>;
+    saveRecord?: (record: AuthRecord) => Promise<void>;
+    probeUsage?: () => Promise<ProbeResponse>;
     moveTo401?: () => Promise<boolean>;
     currentDisabled?: boolean;
     setDisabled?: (disabled: boolean) => Promise<void>;
+    emailHint?: string;
 }
 
 const DEFAULT_AUTH_DIR = path.resolve(process.cwd(), "auth");
@@ -187,6 +196,55 @@ async function collectCPAAuthTargets(): Promise<AuthTarget[]> {
                 },
             } satisfies AuthTarget;
         });
+    targets.sort((left, right) => left.filePath.localeCompare(right.filePath));
+    return targets;
+}
+
+function normalizeCPAToolsDisabled(value: unknown): boolean {
+    if (typeof value === "boolean") {
+        return value;
+    }
+    if (typeof value === "string") {
+        return value.trim().toLowerCase() === "true";
+    }
+    return false;
+}
+
+async function collectCPAToolsAuthTargets(): Promise<AuthTarget[]> {
+    const files = await listAuthFilesFromCPATools();
+    const targets = files.map((item) => {
+        const name = String(item.name ?? "").trim();
+        const filePath = `cpatools:${name}`;
+        return {
+            filePath,
+            currentDisabled: normalizeCPAToolsDisabled(item.disabled),
+            emailHint: String(item.account ?? item.email ?? name).trim(),
+            async loadRecord() {
+                if (resolveCPAToolsAuthIndex(item) == null) {
+                    const payload = await downloadAuthFileJsonObjectFromCLIProxyAPI(name);
+                    if (!isCodexAuthRecord(payload)) {
+                        throw new Error(`不是 codex auth 文件: ${name}`);
+                    }
+                    return payload as AuthRecord;
+                }
+
+                return {
+                    email: String(item.account ?? item.email ?? "").trim(),
+                    disabled: normalizeCPAToolsDisabled(item.disabled),
+                    type: "codex",
+                    expired: "-",
+                    websockets: false,
+                };
+            },
+            probeUsage: resolveCPAToolsAuthIndex(item) != null
+                ? async () => await probeAuthFileFromCPATools(item as CPAToolsAuthFileItem)
+                : undefined,
+            async moveTo401() {
+                await deleteAuthFileFromCPATools(name);
+                return true;
+            },
+        } satisfies AuthTarget;
+    });
     targets.sort((left, right) => left.filePath.localeCompare(right.filePath));
     return targets;
 }
@@ -568,12 +626,12 @@ async function summarizeAuth(filePath: string, forceRefresh: boolean): Promise<A
 
 async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): Promise<AuthSummary> {
     const filePath = target.filePath;
-    let record = await target.loadRecord();
+    let record = target.loadRecord ? await target.loadRecord() : {};
     const claims = decodeJwtClaims(record.id_token ?? record.access_token);
-    const email = record.email?.trim() || claims?.email?.trim() || path.basename(filePath);
+    const email = target.emailHint?.trim() || record.email?.trim() || claims?.email?.trim() || path.basename(filePath);
     const localPlan = claims?.["https://api.openai.com/auth"]?.chatgpt_plan_type?.trim() || "-";
 
-    if (!record.access_token) {
+    if (!record.access_token && !target.probeUsage) {
         return {
             file: maskPath(filePath),
             email,
@@ -596,11 +654,14 @@ async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): P
     let probe: ProbeResponse;
     let message = "";
 
-    if (forceRefresh) {
+    if (target.probeUsage) {
+        probe = await target.probeUsage();
+        message = extractMessage(probe.body);
+    } else if (forceRefresh) {
         const refreshed = await refreshAccessToken(record);
         if (refreshed.record) {
             record = refreshed.record;
-            await target.saveRecord(record);
+            await target.saveRecord?.(record);
             probe = await sendUsageProbe(record.access_token ?? "", record.account_id?.trim() || "");
             message = extractMessage(probe.body);
         } else {
@@ -611,7 +672,7 @@ async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): P
             message = refreshed.error || "refresh 失败";
         }
     } else {
-        probe = await sendUsageProbe(record.access_token, record.account_id?.trim() || "");
+        probe = await sendUsageProbe(record.access_token ?? "", record.account_id?.trim() || "");
         message = extractMessage(probe.body);
     }
 
@@ -640,11 +701,11 @@ async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): P
                     };
                 }
             }
-        } else {
+        } else if (!target.probeUsage) {
             const refreshed = await refreshAccessToken(record);
             if (refreshed.record) {
                 record = refreshed.record;
-                await target.saveRecord(record);
+                await target.saveRecord?.(record);
                 probe = await sendUsageProbe(record.access_token ?? "", record.account_id?.trim() || "");
                 message = extractMessage(probe.body);
             } else {
@@ -722,8 +783,11 @@ async function main(): Promise<void> {
     const forceRefresh = hasFlag("--refresh");
     const verbose = hasFlag("--verbose");
     const useCPA = hasFlag("--cpa");
+    const useCPATools = hasFlag("--cpatools");
     const authDir = path.resolve(readFlagValue("--dir").trim() || DEFAULT_AUTH_DIR);
-    const targets = useCPA
+    const targets = useCPATools
+        ? await collectCPAToolsAuthTargets()
+        : useCPA
         ? await collectCPAAuthTargets()
         : (await collectAuthFiles(authDir)).map((filePath) => ({
             filePath,
@@ -735,12 +799,18 @@ async function main(): Promise<void> {
         Number.isFinite(limitArg) && limitArg > 0 ? targets.slice(0, limitArg) : targets;
 
     if (!targetItems.length) {
-        throw new Error(useCPA ? "未在 CPA 中找到可检查的 codex 授权文件" : `未在目录中找到授权文件: ${authDir}`);
+        throw new Error(
+            useCPATools
+                ? "未在 CPAtools 中找到可检查的 codex 授权文件"
+                : useCPA
+                    ? "未在 CPA 中找到可检查的 codex 授权文件"
+                    : `未在目录中找到授权文件: ${authDir}`,
+        );
     }
 
     const concurrency = resolveConcurrency(targetItems.length);
     console.log(
-        `准备检查 ${targetItems.length} 个 auth 文件: ${useCPA ? "CPA" : authDir}${forceRefresh ? " (强制刷新 token)" : ""} (并发: ${concurrency})`,
+        `准备检查 ${targetItems.length} 个 auth 文件: ${useCPATools ? "CPAtools" : useCPA ? "CPA" : authDir}${forceRefresh && !useCPATools ? " (强制刷新 token)" : ""} (并发: ${concurrency})`,
     );
 
     const indexedRows = await mapWithConcurrency<AuthTarget, IndexedAuthSummary>(
