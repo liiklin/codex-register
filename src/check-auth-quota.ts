@@ -15,6 +15,7 @@ import {
     listAuthFilesFromCPATools,
     probeAuthFileFromCPATools,
     resolveCPAToolsAuthIndex,
+    setAuthFileDisabledStatusToCPATools,
     type CPAToolsAuthFileItem,
 } from "./cpatoolsapi.js";
 import {appConfig} from "./config.js";
@@ -242,6 +243,9 @@ async function collectCPAToolsAuthTargets(): Promise<AuthTarget[]> {
             async moveTo401() {
                 await deleteAuthFileFromCPATools(name);
                 return true;
+            },
+            async setDisabled(disabled: boolean) {
+                await setAuthFileDisabledStatusToCPATools(name, disabled);
             },
         } satisfies AuthTarget;
     });
@@ -624,7 +628,7 @@ async function summarizeAuth(filePath: string, forceRefresh: boolean): Promise<A
     }, forceRefresh);
 }
 
-async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): Promise<AuthSummary> {
+export async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): Promise<AuthSummary> {
     const filePath = target.filePath;
     let record = target.loadRecord ? await target.loadRecord() : {};
     const claims = decodeJwtClaims(record.id_token ?? record.access_token);
@@ -749,11 +753,11 @@ async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): P
         if (remainingPercent <= 5 && target.currentDisabled !== true) {
             await target.setDisabled(true);
             target.currentDisabled = true;
-            console.log(`cpaAuthDisabled: ${filePath} remaining=${remainingPercent.toFixed(2)}%`);
+            console.log(`authDisabled: ${filePath} remaining=${remainingPercent.toFixed(2)}%`);
         } else if (remainingPercent > 5 && target.currentDisabled === true) {
             await target.setDisabled(false);
             target.currentDisabled = false;
-            console.log(`cpaAuthEnabled: ${filePath} remaining=${remainingPercent.toFixed(2)}%`);
+            console.log(`authEnabled: ${filePath} remaining=${remainingPercent.toFixed(2)}%`);
         }
     }
 
@@ -845,7 +849,20 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-});
+export function shouldRunCheckAuthQuotaMain(argvEntry: string | undefined): boolean {
+    if (!argvEntry?.trim()) {
+        return false;
+    }
+
+    const normalizedEntry = path.basename(path.resolve(argvEntry)).toLowerCase();
+    return normalizedEntry === "check-auth-quota.ts"
+        || normalizedEntry === "check-auth-quota.js"
+        || normalizedEntry === "check-auth-quota.cjs";
+}
+
+if (shouldRunCheckAuthQuotaMain(process.argv[1])) {
+    main().catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+    });
+}

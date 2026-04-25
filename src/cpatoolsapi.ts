@@ -167,3 +167,25 @@ export async function deleteAuthFileFromCPATools(fileName: string): Promise<void
     throw new Error(`CPAtools 删除 auth 失败: ${response.status} body=${rawBody}`);
   }
 }
+
+export async function setAuthFileDisabledStatusToCPATools(
+  fileName: string,
+  disabled: boolean,
+): Promise<void> {
+  const {baseUrl} = getCPAToolsAPIConfig();
+  const response = await fetch(`${baseUrl}/v0/management/auth-files/status`, {
+    method: "PATCH",
+    headers: createManagementHeaders({
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({
+      name: fileName,
+      disabled,
+    }),
+  });
+
+  const rawBody = await response.text();
+  if (!response.ok) {
+    throw new Error(`CPAtools 更新 auth 状态失败: ${response.status} body=${rawBody}`);
+  }
+}
