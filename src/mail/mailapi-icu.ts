@@ -1,4 +1,4 @@
-import {readFile} from "node:fs/promises";
+import {appendFile, readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher, type RequestInit as UndiciRequestInit} from "undici";
 import {appConfig} from "../config.js";
@@ -8,6 +8,7 @@ interface MailApiIcuAccount {
     email: string;
     apiUrl: string;
     orderNo: string;
+    lineRaw: string;
 }
 
 interface MailApiIcuMessage {
@@ -24,6 +25,7 @@ interface MailApiIcuMessage {
 
 const MAILAPI_ICU_DIR = path.resolve(process.cwd(), "mailapi-icu");
 const MAILAPI_ICU_TOKENS_FILE = path.join(MAILAPI_ICU_DIR, "tokens.txt");
+const MAILAPI_ICU_USED_FILE = path.join(MAILAPI_ICU_DIR, "used.txt");
 const MAILAPI_ICU_POLL_ATTEMPTS = 36;
 const MAILAPI_ICU_POLL_INTERVAL_MS = 5000;
 
@@ -84,6 +86,7 @@ function parseTokenLine(line: string, index: number): MailApiIcuAccount | null {
         email,
         apiUrl: parsedUrl.toString(),
         orderNo,
+        lineRaw: line,
     };
 }
 
@@ -256,6 +259,60 @@ async function resolveAccountForEmail(email: string): Promise<MailApiIcuAccount>
     return matched;
 }
 
+async function removeAccountLine(account: MailApiIcuAccount): Promise<boolean> {
+    const raw = await readFile(MAILAPI_ICU_TOKENS_FILE, "utf8");
+    const lines = raw.split(/\r?\n/);
+
+    let removed = false;
+    const nextLines = lines.filter((line) => {
+        if (removed) {
+            return true;
+        }
+        if (line.trim() === account.lineRaw.trim()) {
+            removed = true;
+            return false;
+        }
+        return true;
+    });
+
+    if (!removed) {
+        return false;
+    }
+
+    const normalizedLines = nextLines.filter((line) => line != null && line !== "");
+    await writeFile(
+        MAILAPI_ICU_TOKENS_FILE,
+        `${normalizedLines.join("\n")}${normalizedLines.length > 0 ? "\n" : ""}`,
+        "utf8",
+    );
+
+    accountCache = null;
+    accountIndex = 0;
+    emailAccountMap.delete(account.email);
+    return true;
+}
+
+async function markAccountUsed(email: string, password: string): Promise<void> {
+    const account = await resolveAccountForEmail(email);
+    const removed = await removeAccountLine(account);
+    if (!removed) {
+        return;
+    }
+
+    const usedRecord = [
+        account.email,
+        account.apiUrl,
+        new Date().toISOString(),
+        password,
+    ].join("----");
+    await appendFile(MAILAPI_ICU_USED_FILE, `${usedRecord}\n`, "utf8");
+}
+
+async function discardAccount(email: string): Promise<void> {
+    const account = await resolveAccountForEmail(email);
+    await removeAccountLine(account);
+}
+
 export function createMailApiIcuProvider() {
     return {
         async getEmailAddress() {
@@ -286,6 +343,12 @@ export function createMailApiIcuProvider() {
             }
 
             throw new Error(`MailAPI.ICU 中未找到验证码: targetEmail=${email}`);
+        },
+        async markEmailAddressUsed(email: string, password: string) {
+            await markAccountUsed(email, password);
+        },
+        async discardEmailAddress(email: string) {
+            await discardAccount(email);
         },
     };
 }

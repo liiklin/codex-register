@@ -1,8 +1,9 @@
 import {appConfig} from "./config.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
+import {discardEmailAddress, markEmailAddressUsed} from "./mailbox.js";
 import {OpenAIClient} from "./openai.js";
-import {createSMSBroker} from "./sms/index.js";
 import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
+import {createSMSBroker} from "./sms/index.js";
 
 function readArgValue(flag: string): string {
     const index = process.argv.indexOf(flag);
@@ -25,19 +26,67 @@ function readNumberArg(flag: string): number | null {
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function collectErrorTexts(error: unknown, seen = new Set<unknown>()): string[] {
+    if (error == null || seen.has(error)) {
+        return [];
+    }
+
+    seen.add(error);
+
+    if (typeof error === "string") {
+        return [error];
+    }
+
+    if (Array.isArray(error)) {
+        return error.flatMap((item) => collectErrorTexts(item, seen));
+    }
+
+    if (error && typeof error === "object" && !(error instanceof Error)) {
+        const record = error as Record<string, unknown>;
+        const candidateKeys = ["code", "errorCode", "type", "message"];
+        const directValues = candidateKeys.flatMap((key) => collectErrorTexts(record[key], seen));
+        const nestedErrorValues = record.error && typeof record.error === "object"
+            ? candidateKeys.flatMap((key) => collectErrorTexts((record.error as Record<string, unknown>)[key], seen))
+            : [];
+        return [...directValues, ...nestedErrorValues].filter(Boolean);
+    }
+
+    if (error instanceof Error) {
+        const enumerableSource = Object.assign<Record<string, unknown>, Error>({}, error);
+        const candidateKeys = ["code", "errorCode", "type", "message", "body", "details", "response"];
+        const directValues = candidateKeys.flatMap((key) => collectErrorTexts(enumerableSource[key], seen));
+
+        return [
+            error.message,
+            ...directValues,
+            ...(error.cause ? collectErrorTexts(error.cause, seen) : []),
+        ].filter(Boolean);
+    }
+
+    return [];
+}
+
 
 const smsBroker = appConfig.heroSMSApiKey ? createSMSBroker({
     apiKey: appConfig.heroSMSApiKey,
     pollAttempts: appConfig.heroSMSPollAttempts,
     pollIntervalMs: appConfig.heroSMSPollIntervalMs,
+    basePrice: appConfig.heroSMSBasePrice,
     maxPrice: appConfig.heroSMSMaxPrice,
+    priceStep: appConfig.heroSMSPriceStep,
     country: appConfig.heroSMSCountry,
 }) : undefined
+
+function isUserAlreadyExistsError(error: unknown): boolean {
+    return collectErrorTexts(error)
+        .some((text) => /(?:^|\W)(?:code=)?user_already_exists(?:$|\W)/i.test(text));
+}
 
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
     const manualOtp = hasFlag("--otp");
     const directSignupAuth = hasFlag("--sign");
+    const shouldRecycleGeneratedMailApiAccount = appConfig.provider === "mailapi-icu" && !email;
     const deviceProfile = generateRandomDeviceProfile();
     if (directSignupAuth) {
         const client = new OpenAIClient({
@@ -48,7 +97,18 @@ async function runOnce(): Promise<void> {
             signupScreenHint: "signup",
             smsBroker
         });
-        const result = await client.authRegisterAndAuthorizeHTTP();
+        let result;
+        try {
+            result = await client.authRegisterAndAuthorizeHTTP();
+        } catch (error) {
+            if (shouldRecycleGeneratedMailApiAccount && client.email && isUserAlreadyExistsError(error)) {
+                await discardEmailAddress(client.email);
+            }
+            throw error;
+        }
+        if (shouldRecycleGeneratedMailApiAccount && client.email) {
+            await markEmailAddressUsed(client.email, appConfig.defaultPassword);
+        }
         console.log(
             `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
         );
@@ -62,7 +122,14 @@ async function runOnce(): Promise<void> {
         manualMode: manualOtp,
         smsBroker
     });
-    await registerClient.authRegisterHTTP();
+    try {
+        await registerClient.authRegisterHTTP();
+    } catch (error) {
+        if (shouldRecycleGeneratedMailApiAccount && registerClient.email && isUserAlreadyExistsError(error)) {
+            await discardEmailAddress(registerClient.email);
+        }
+        throw error;
+    }
 
     const loginClient = new OpenAIClient({
         email: registerClient.email,
@@ -70,10 +137,11 @@ async function runOnce(): Promise<void> {
         deviceProfile,
         manualMode: manualOtp,
         smsBroker
-    basePrice: appConfig.heroSMSBasePrice,
     });
-    priceStep: appConfig.heroSMSPriceStep,
     const result = await loginClient.authLoginHTTP();
+    if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
+        await markEmailAddressUsed(loginClient.email, appConfig.defaultPassword);
+    }
     console.log(
         `[✅️授权成功] 邮箱：${loginClient.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
     );
@@ -131,6 +199,10 @@ async function main() {
         } catch (error) {
             failCount += 1;
             console.error(`[❌️授权失败]`, error);
+            if (error instanceof HeroSmsMaxPriceExhaustedError) {
+                console.log(`[停止] HeroSMS 已达到最大报价仍无号码，结束自动循环`);
+                break;
+            }
         }
 
         if (appConfig.loopDelayMs > 0) {
@@ -148,7 +220,3 @@ main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
 });
-            if (error instanceof HeroSmsMaxPriceExhaustedError) {
-                console.log(`[停止] HeroSMS 已达到最大报价仍无号码，结束自动循环`);
-                break;
-            }
