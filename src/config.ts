@@ -19,8 +19,9 @@ interface AppConfigFile {
     defaultProxyUrl?: unknown;
     heroSMSApiKey?: unknown;
     heroSMSCountry?: unknown;
-    heroSMSCountries?: unknown;
+    heroSMSBasePrice?: unknown;
     heroSMSMaxPrice?: unknown;
+    heroSMSPriceStep?: unknown;
     heroSMSPollAttempts?: unknown;
     heroSMSPollIntervalMs?: unknown;
     cliproxyApiAutoUploadAuth?: unknown;
@@ -47,8 +48,9 @@ export interface AppConfig {
     defaultProxyUrl: string;
     heroSMSApiKey?: string;
     heroSMSCountry: number;
-    heroSMSCountries: number[];
+    heroSMSBasePrice: number;
     heroSMSMaxPrice: number;
+    heroSMSPriceStep: number;
     heroSMSPollAttempts: number;
     heroSMSPollIntervalMs: number;
     cliproxyApiAutoUploadAuth: boolean;
@@ -75,8 +77,9 @@ const DEFAULT_CONFIG: AppConfig = {
     defaultProxyUrl: "http://127.0.0.1:10808",
     heroSMSApiKey: undefined,
     heroSMSCountry: 52,
-    heroSMSCountries: [],
+    heroSMSBasePrice: 0.05,
     heroSMSMaxPrice: 0.05,
+    heroSMSPriceStep: 0.01,
     heroSMSPollAttempts: 10,
     heroSMSPollIntervalMs: 3000,
     cliproxyApiAutoUploadAuth: false,
@@ -94,15 +97,9 @@ function normalizeNumber(value: unknown, fallback: number): number {
     return value;
 }
 
-function normalizeNumberList(value: unknown): number[] {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-
-    return value
-        .map((item) => Number(item))
-        .filter((item) => Number.isFinite(item))
-        .map((item) => Math.trunc(item));
+function normalizeNonNegativeNumber(value: unknown, fallback: number): number {
+    const normalized = normalizeNumber(value, fallback);
+    return normalized >= 0 ? normalized : fallback;
 }
 
 function normalizeProvider(value: unknown): MailProviderName {
@@ -138,6 +135,23 @@ function loadConfig(): AppConfig {
     }
 
     const parsed = JSON.parse(raw) as AppConfigFile;
+    const legacyHeroSmsMaxPrice = normalizeNonNegativeNumber(
+        parsed.heroSMSMaxPrice,
+        DEFAULT_CONFIG.heroSMSMaxPrice,
+    );
+    const heroSMSBasePrice = normalizeNonNegativeNumber(
+        parsed.heroSMSBasePrice,
+        legacyHeroSmsMaxPrice,
+    );
+    const heroSMSMaxPrice = Math.max(
+        heroSMSBasePrice,
+        normalizeNonNegativeNumber(parsed.heroSMSMaxPrice, heroSMSBasePrice),
+    );
+    const heroSMSPriceStep = normalizeNonNegativeNumber(
+        parsed.heroSMSPriceStep,
+        DEFAULT_CONFIG.heroSMSPriceStep,
+    );
+
     return {
         provider: normalizeProvider(parsed.provider),
         defaultPassword:
@@ -193,11 +207,9 @@ function loadConfig(): AppConfig {
           typeof parsed.heroSMSCountry === "number"
             ? parsed.heroSMSCountry
             : DEFAULT_CONFIG.heroSMSCountry,
-        heroSMSCountries: normalizeNumberList(parsed.heroSMSCountries),
-        heroSMSMaxPrice:
-          typeof parsed.heroSMSMaxPrice === "number"
-            ? parsed.heroSMSMaxPrice
-            : DEFAULT_CONFIG.heroSMSMaxPrice,
+        heroSMSBasePrice,
+        heroSMSMaxPrice,
+        heroSMSPriceStep,
         heroSMSPollAttempts:
           typeof parsed.heroSMSPollAttempts === "number"
             ? parsed.heroSMSPollAttempts

@@ -4,8 +4,9 @@ import { createHeroSmsProvider } from "./heroSMS.js";
 type HeroSMSBrokerOption = {
   apiKey: string;
   country: number;
-  countries?: number[];
+  basePrice: number;
   maxPrice: number;
+  priceStep: number;
   pollAttempts: number;
   pollIntervalMs: number;
 }
@@ -18,12 +19,12 @@ export const createSMSBroker = (option: HeroSMSBrokerOption) => {
         // openai
         service: "dr",
         country: option.country,
-        fallbackCountries: (option.countries ?? []).filter(
-          (candidate) => candidate !== option.country,
-        ),
-        maxPrice: option.maxPrice,
+        maxPrice: option.basePrice,
         fixedPrice: true,
       },
+      dynamicBasePrice: option.basePrice,
+      dynamicMaxPrice: option.maxPrice,
+      dynamicPriceStep: option.priceStep,
       defaultWaitForCodeOptions: {
         markReady: false,
         completeOnCode: false,

@@ -2,6 +2,7 @@ import {appConfig} from "./config.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {OpenAIClient} from "./openai.js";
 import {createSMSBroker} from "./sms/index.js";
+import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
 
 function readArgValue(flag: string): string {
     const index = process.argv.indexOf(flag);
@@ -31,7 +32,6 @@ const smsBroker = appConfig.heroSMSApiKey ? createSMSBroker({
     pollIntervalMs: appConfig.heroSMSPollIntervalMs,
     maxPrice: appConfig.heroSMSMaxPrice,
     country: appConfig.heroSMSCountry,
-    countries: appConfig.heroSMSCountries,
 }) : undefined
 
 async function runOnce(): Promise<void> {
@@ -70,7 +70,9 @@ async function runOnce(): Promise<void> {
         deviceProfile,
         manualMode: manualOtp,
         smsBroker
+    basePrice: appConfig.heroSMSBasePrice,
     });
+    priceStep: appConfig.heroSMSPriceStep,
     const result = await loginClient.authLoginHTTP();
     console.log(
         `[✅️授权成功] 邮箱：${loginClient.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
@@ -146,3 +148,7 @@ main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
 });
+            if (error instanceof HeroSmsMaxPriceExhaustedError) {
+                console.log(`[停止] HeroSMS 已达到最大报价仍无号码，结束自动循环`);
+                break;
+            }

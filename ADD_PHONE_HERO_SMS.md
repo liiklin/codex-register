@@ -50,7 +50,9 @@
 {
   "heroSMSApiKey": "your-api-key",
   "heroSMSCountry": 52, // 可选，默认为泰国
-  "heroSMSMaxPrice": 0.05, // 可选，采用固定价格，0.05
+  "heroSMSBasePrice": 0.05, // 起始报价
+  "heroSMSMaxPrice": 0.08, // 最高报价
+  "heroSMSPriceStep": 0.01, // 每次无号时的加价步进
   "heroSMSPollAttempts": 10, // 可选，一轮等待轮询次数
   "heroSMSPollIntervalMs": 3000 // 可选，轮询间隔
 }
@@ -58,7 +60,13 @@
 
 heroSMSCountry 为 HeroSMS 平台对应的 countryCode
 
-heroSMSMaxPrice 为获取号码时的报价，可用价格会可能变动。
+heroSMSBasePrice 为获取号码时的起始报价。
+
+heroSMSMaxPrice 为进程内动态加价时允许提升到的最高报价。
+
+heroSMSPriceStep 为在 `NO_NUMBERS` 时单次上调的报价步进。
+
+当前策略只使用 `heroSMSCountry` 主国家，不再自动降级尝试其它国家；如果当前国家在最高报价下仍然无号，自动模式会停止循环。
 
 heroSMSPollAttempts 为在进行一轮等待时，轮询 HeroSMS API 的次数，heroSMSPollIntervalMs 则为单次轮询的等待时间。
 
@@ -72,4 +80,4 @@ HeroSMS 要求单次申请最低的可取消/可完成间隔为 2min，因此配
 
 > [!Note]
 > 每个号码可以使用 1 - 3 次，超出会引发 phone_max_usage_exceed 错误。
-> 目前固定选用泰国，$0.05，尚未进行配置化，如需变更请手动在 `src/sms/index.ts` 中进行更改
+> 当前只使用 `heroSMSCountry` 主国家，并按 `heroSMSBasePrice -> heroSMSMaxPrice` 做进程内动态加价。

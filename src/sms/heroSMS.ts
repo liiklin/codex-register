@@ -48,6 +48,9 @@ export interface HeroSmsProviderConfig {
   proxyUrl?: string;
   pollAttempts?: number;
   pollIntervalMs?: number;
+  dynamicBasePrice?: number;
+  dynamicMaxPrice?: number;
+  dynamicPriceStep?: number;
   defaultRequestOptions?: HeroSmsNumberRequestOptions;
   defaultWaitForCodeOptions?: HeroSmsWaitForCodeOptions;
 }
@@ -55,7 +58,6 @@ export interface HeroSmsProviderConfig {
 export interface HeroSmsNumberRequestOptions {
   service: string;
   country: number;
-  fallbackCountries?: number[];
   operator?: string | string[];
   maxPrice?: number;
   fixedPrice?: boolean;
@@ -459,24 +461,53 @@ export class HeroSmsWaitTimeoutError extends Error {
   }
 }
 
-function normalizeCountryCandidates(value?: number[]): number[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+export class HeroSmsMaxPriceExhaustedError extends Error {
+  readonly basePrice: number;
+  readonly maxPrice: number;
+  readonly step: number;
 
-  return value
-    .map((item) => Number(item))
-    .filter((item) => Number.isFinite(item))
-    .map((item) => Math.trunc(item));
+  constructor(options: {basePrice: number; maxPrice: number; step: number}) {
+    super(
+      `HeroSMS 已达到最大报价仍无可用号码: basePrice=${options.basePrice.toFixed(2)} maxPrice=${options.maxPrice.toFixed(2)} step=${options.step.toFixed(2)}`,
+    );
+    this.name = "HeroSmsMaxPriceExhaustedError";
+    this.basePrice = options.basePrice;
+    this.maxPrice = options.maxPrice;
+    this.step = options.step;
+  }
 }
 
-export function buildCountryAttemptOrder(
-  options: HeroSmsNumberRequestOptions,
-): number[] {
-  return [
-    ensureCountryConfigured(options),
-    ...normalizeCountryCandidates(options.fallbackCountries),
-  ].filter((country, index, list) => list.indexOf(country) === index);
+function normalizePrice(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
+function resolveDynamicBasePrice(config: HeroSmsProviderConfig): number {
+  return normalizePrice(
+    config.dynamicBasePrice ?? config.defaultRequestOptions?.maxPrice,
+    0,
+  );
+}
+
+function resolveDynamicMaxPrice(config: HeroSmsProviderConfig, basePrice: number): number {
+  return Math.max(
+    basePrice,
+    normalizePrice(config.dynamicMaxPrice ?? basePrice, basePrice),
+  );
+}
+
+function resolveDynamicPriceStep(config: HeroSmsProviderConfig): number {
+  return normalizePrice(config.dynamicPriceStep, 0);
+}
+
+function buildNoNumbersAtMaxPriceError(config: HeroSmsProviderConfig): HeroSmsMaxPriceExhaustedError {
+  const basePrice = resolveDynamicBasePrice(config);
+  const maxPrice = resolveDynamicMaxPrice(config, basePrice);
+  const step = resolveDynamicPriceStep(config);
+  return new HeroSmsMaxPriceExhaustedError({basePrice, maxPrice, step});
 }
 
 export function isNoNumbersApiError(error: unknown): error is HeroSmsApiError {
@@ -486,6 +517,10 @@ export function isNoNumbersApiError(error: unknown): error is HeroSmsApiError {
 
   if (error.action !== "getNumberV2") {
     return false;
+  }
+
+  if (typeof error.payload === "string") {
+    return error.payload.trim().toUpperCase() === "NO_NUMBERS";
   }
 
   if (!isRecord(error.payload)) {
@@ -848,10 +883,56 @@ function delay(ms: number): Promise<void> {
 
 export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
   ensureApiKeyConfigured(config);
+  const dynamicBasePrice = resolveDynamicBasePrice(config);
+  const dynamicMaxPrice = resolveDynamicMaxPrice(config, dynamicBasePrice);
+  const dynamicPriceStep = resolveDynamicPriceStep(config);
+  let currentDynamicMaxPrice = dynamicBasePrice;
   const deliveredActivationSnapshotById = new Map<
     string,
     DeliveredActivationSnapshot
   >();
+
+  function applyDynamicPrice(options: HeroSmsNumberRequestOptions): HeroSmsNumberRequestOptions {
+    if (options.maxPrice == null) {
+      return options;
+    }
+
+    return {
+      ...options,
+      maxPrice: currentDynamicMaxPrice,
+    };
+  }
+
+  function canRaiseDynamicPrice(): boolean {
+    return dynamicPriceStep > 0 && currentDynamicMaxPrice + 0.000001 < dynamicMaxPrice;
+  }
+
+  function raiseDynamicPrice(): boolean {
+    if (!canRaiseDynamicPrice()) {
+      return false;
+    }
+
+    const previousPrice = currentDynamicMaxPrice;
+    currentDynamicMaxPrice = Math.min(
+      dynamicMaxPrice,
+      Math.round((currentDynamicMaxPrice + dynamicPriceStep) * 100) / 100,
+    );
+    console.log(
+      `[heroSMS] NO_NUMBERS，动态上调 maxPrice: ${previousPrice.toFixed(2)} -> ${currentDynamicMaxPrice.toFixed(2)}`,
+    );
+    return true;
+  }
+
+  function resetDynamicPriceOnSuccess(): void {
+    if (currentDynamicMaxPrice === dynamicBasePrice) {
+      return;
+    }
+
+    console.log(
+      `[heroSMS] 成功拿到号码，动态报价回落: ${currentDynamicMaxPrice.toFixed(2)} -> ${dynamicBasePrice.toFixed(2)}`,
+    );
+    currentDynamicMaxPrice = dynamicBasePrice;
+  }
 
   const provider: HeroSmsProvider = {
     async requestActivation(): Promise<HeroSmsActivation> {
@@ -863,29 +944,35 @@ export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
     async requestPhoneNumber(
       options: HeroSmsNumberRequestOptions,
     ): Promise<HeroSmsActivation> {
-      const countries = buildCountryAttemptOrder(options);
       let lastError: unknown = null;
 
-      for (let index = 0; index < countries.length; index += 1) {
-        const country = countries[index];
+      while (true) {
+        const requestOptions = applyDynamicPrice(options);
+
         try {
-          if (index > 0) {
-            console.log(
-              `[heroSMS] 主国家无号，降级尝试候选国家 country=${country} (${index + 1}/${countries.length})`,
-            );
-          }
-          return await requestPhoneNumberForCountry(config, options, country);
+          const activation = await requestPhoneNumberForCountry(
+            config,
+            requestOptions,
+            ensureCountryConfigured(requestOptions),
+          );
+          resetDynamicPriceOnSuccess();
+          return activation;
         } catch (error) {
           lastError = error;
-          if (!isNoNumbersApiError(error) || index === countries.length - 1) {
+          if (!isNoNumbersApiError(error)) {
             throw error;
           }
         }
-      }
 
-      throw lastError instanceof Error
-        ? lastError
-        : new Error("HeroSMS 请求号码失败");
+        if (!raiseDynamicPrice()) {
+          if (isNoNumbersApiError(lastError)) {
+            throw buildNoNumbersAtMaxPriceError(config);
+          }
+          throw lastError instanceof Error
+            ? lastError
+            : new Error("HeroSMS 请求号码失败");
+        }
+      }
     },
 
     async markActivationReady(activationId: string | number): Promise<string> {
