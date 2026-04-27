@@ -282,6 +282,7 @@ npm run check:cpatools -- --limit 50 -c 20 --table
 - `gmail`
 - `gptmail`
 - `hotmail`
+- `mailapi-icu`
 - `2925`
 - `cloudflare`
 
@@ -376,7 +377,42 @@ someone@hotmail.com----YourPassword123----a016c639-6112-4efe-b2cd-8ef74231bb97--
 
 - [GPTMail API 文档](https://mail.chatgpt.org.uk/zh/api)
 
-### 5）2925
+### 5）mailapi-icu
+
+```json
+{
+  "provider": "mailapi-icu"
+}
+```
+
+邮箱账号放 `mailapi-icu/tokens.txt` 文件里：
+
+`tokens.txt` 格式为：
+
+```text
+邮箱----MailAPI地址
+```
+
+一行一个账号，例如：
+
+```text
+someone@example.com----https://mailapi.icu/key?orderNo=202604260001
+another@example.com----https://mailapi.icu/key?orderNo=202604260002
+```
+
+说明：
+
+- 第 1 段：注册时使用的邮箱
+- 第 2 段：MailAPI 取件地址，必须带 `orderNo` 参数
+- 如果手动传 `--email`，必须和 `tokens.txt` 里的邮箱完全一致
+
+程序会：
+
+- 从 `tokens.txt` 轮换取一个邮箱作为当前注册邮箱
+- 从该行的 MailAPI 地址里提取 `orderNo`
+- 轮询 `type=json` 的取件结果并提取验证码
+
+### 6）2925
 
 ```json
 {
@@ -386,7 +422,7 @@ someone@hotmail.com----YourPassword123----a016c639-6112-4efe-b2cd-8ef74231bb97--
 }
 ```
 
-### 6）cloudflare
+### 7）cloudflare
 
 ```json
 {
@@ -422,6 +458,8 @@ Cloudflare Worker 部署说明见：[MAIL_WORKER_DEPLOY.md](./MAIL_WORKER_DEPLOY
     - GPTMail 指定生成邮箱时使用的域名，可留空
 - `hotmail`
     - 使用 `./hotmail/tokens.txt` 作为 Hotmail/Outlook 账号来源
+- `mailapi-icu`
+    - 使用 `./mailapi-icu/tokens.txt` 作为 MailAPI.ICU 账号来源
 - `2925EmailAddress`
     - 2925 邮箱账号
 - `2925Password`

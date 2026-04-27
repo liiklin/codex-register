@@ -4,6 +4,7 @@ import {createCloudflareProvider} from "./mail/cloudflare.js";
 import {createGmailProvider} from "./mail/gmail.js";
 import {createGPTMailProvider} from "./mail/gptmail.js";
 import {createHotmailProvider} from "./mail/hotmail.js";
+import {createMailApiIcuProvider} from "./mail/mailapi-icu.js";
 import {createProxiedMailProvider} from "./mail/proxiedmail.js";
 
 export interface EmailCodeProvider {
@@ -27,6 +28,8 @@ function createProvider(): EmailCodeProvider {
       return createGPTMailProvider();
     case "hotmail":
       return createHotmailProvider();
+    case "mailapi-icu":
+      return createMailApiIcuProvider();
     case "2925":
       return create2925Provider();
     case "cloudflare":
