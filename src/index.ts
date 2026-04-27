@@ -82,6 +82,11 @@ function isUserAlreadyExistsError(error: unknown): boolean {
         .some((text) => /(?:^|\W)(?:code=)?user_already_exists(?:$|\W)/i.test(text));
 }
 
+function isMailApiIcuAuthFailedError(error: unknown): boolean {
+    return collectErrorTexts(error)
+        .some((text) => text.includes("MailAPI.ICU 请求失败: 401") || text.includes("邮箱认证失败"));
+}
+
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
     const manualOtp = hasFlag("--otp");
@@ -101,8 +106,10 @@ async function runOnce(): Promise<void> {
         try {
             result = await client.authRegisterAndAuthorizeHTTP();
         } catch (error) {
-            if (shouldRecycleGeneratedMailApiAccount && client.email && isUserAlreadyExistsError(error)) {
-                await discardEmailAddress(client.email);
+            if (shouldRecycleGeneratedMailApiAccount && client.email) {
+                if (isUserAlreadyExistsError(error) || isMailApiIcuAuthFailedError(error)) {
+                    await discardEmailAddress(client.email);
+                }
             }
             throw error;
         }
@@ -125,8 +132,10 @@ async function runOnce(): Promise<void> {
     try {
         await registerClient.authRegisterHTTP();
     } catch (error) {
-        if (shouldRecycleGeneratedMailApiAccount && registerClient.email && isUserAlreadyExistsError(error)) {
-            await discardEmailAddress(registerClient.email);
+        if (shouldRecycleGeneratedMailApiAccount && registerClient.email) {
+            if (isUserAlreadyExistsError(error) || isMailApiIcuAuthFailedError(error)) {
+                await discardEmailAddress(registerClient.email);
+            }
         }
         throw error;
     }
@@ -138,7 +147,17 @@ async function runOnce(): Promise<void> {
         manualMode: manualOtp,
         smsBroker
     });
-    const result = await loginClient.authLoginHTTP();
+    let result;
+    try {
+        result = await loginClient.authLoginHTTP();
+    } catch (error) {
+        if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
+            if (isMailApiIcuAuthFailedError(error)) {
+                await discardEmailAddress(loginClient.email);
+            }
+        }
+        throw error;
+    }
     if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
         await markEmailAddressUsed(loginClient.email, appConfig.defaultPassword);
     }

@@ -246,6 +246,11 @@ export class OpenAIClient {
             .includes("phone_max_usage_exceed");
     }
 
+    private isPhoneNumberInUseError(error: unknown): boolean {
+        return String(error instanceof Error ? error.message : error)
+            .includes("phone_number_in_use");
+    }
+
     private async requestPhoneOtpWithRetry(progress: {current: number | string; total: number}) {
         if (!this.smsBroker) {
             throw new Error("未配置 SMS provider，无法进行短信验证");
@@ -267,14 +272,29 @@ export class OpenAIClient {
                     lease,
                 };
             } catch (error) {
+                const shouldRotateAndRetry = attempt < 2 && (
+                    this.isPhoneMaxUsageExceededError(error) ||
+                    this.isPhoneNumberInUseError(error)
+                );
+
+                if (shouldRotateAndRetry) {
+                    const reason = this.isPhoneMaxUsageExceededError(error)
+                        ? "phone_max_usage_exceed"
+                        : "phone_number_in_use";
+                    console.log(`[add-phone] 号码 ${phoneNumber} 触发 ${reason}，准备轮换新号码重试`);
+                    await this.smsBroker.markAsFailed(true);
+                    lease = await this.smsBroker.getActivation();
+                    console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
+                    continue;
+                }
+
+                if (this.smsBroker) {
+                    await this.smsBroker.markAsFailed(true);
+                }
+
                 if (!this.isPhoneMaxUsageExceededError(error) || attempt === 2) {
                     throw error;
                 }
-
-                console.log(`[add-phone] 号码 ${phoneNumber} 触发 phone_max_usage_exceed，准备轮换新号码重试`);
-                await this.smsBroker.markAsFailed(true);
-                lease = await this.smsBroker.getActivation();
-                console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
             }
         }
 
