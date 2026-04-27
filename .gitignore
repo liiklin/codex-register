@@ -12,3 +12,4 @@ countries.json
 pnpm-lock.yaml
 .serena
 *.test.ts
+mailapi-icu
