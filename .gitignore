@@ -14,3 +14,6 @@ pnpm-lock.yaml
 *.test.ts
 mailapi-icu
 config copy.json
+
+# Private client workspace placeholder
+client-app/
