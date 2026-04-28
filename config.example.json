@@ -1,6 +1,5 @@
 {
   "provider": "proxiedmail",
-
   "defaultProxyUrl": "http://127.0.0.1:10808",
   "defaultPassword": "kuaileshifu88",
   "loopDelayMs": 30000,
@@ -8,6 +7,9 @@
   "gmailEmailAddress": "",
   "gptMailApiKey": "",
   "gptMailDomain": "",
+  "freemailApiBaseUrl": "",
+  "freemailApiToken": "",
+  "freemailDeleteDomain": "",
   "2925EmailAddress": "",
   "2925Password": "",
   "cloudflareEmailDomain": "",

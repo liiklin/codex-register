@@ -1,7 +1,7 @@
 import {readFileSync} from "node:fs";
 import path from "node:path";
 
-export type MailProviderName = "2925" | "gmail" | "proxiedmail" | "cloudflare" | "hotmail" | "gptmail" | "mailapi-icu";
+export type MailProviderName = "2925" | "gmail" | "proxiedmail" | "cloudflare" | "hotmail" | "gptmail" | "mailapi-icu" | "freemail";
 
 interface AppConfigFile {
     provider?: unknown;
@@ -11,6 +11,9 @@ interface AppConfigFile {
     gmailEmailAddress?: unknown;
     gptMailApiKey?: unknown;
     gptMailDomain?: unknown;
+    freemailApiBaseUrl?: unknown;
+    freemailApiToken?: unknown;
+    freemailDeleteDomain?: unknown;
     "2925EmailAddress"?: unknown;
     "2925Password"?: unknown;
     cloudflareEmailDomain?: unknown;
@@ -40,6 +43,9 @@ export interface AppConfig {
     gmailEmailAddress: string;
     gptMailApiKey: string;
     gptMailDomain: string;
+    freemailApiBaseUrl: string;
+    freemailApiToken: string;
+    freemailDeleteDomain: string;
     ["2925EmailAddress"]: string;
     ["2925Password"]: string;
     cloudflareEmailDomain: string;
@@ -69,6 +75,9 @@ const DEFAULT_CONFIG: AppConfig = {
     gmailEmailAddress: "",
     gptMailApiKey: "",
     gptMailDomain: "",
+    freemailApiBaseUrl: "",
+    freemailApiToken: "",
+    freemailDeleteDomain: "",
     "2925EmailAddress": "",
     "2925Password": "",
     cloudflareEmailDomain: "",
@@ -103,7 +112,7 @@ function normalizeNonNegativeNumber(value: unknown, fallback: number): number {
 }
 
 function normalizeProvider(value: unknown): MailProviderName {
-    if (value === "2925" || value === "gmail" || value === "proxiedmail" || value === "cloudflare" || value === "hotmail" || value === "gptmail" || value === "mailapi-icu") {
+    if (value === "2925" || value === "gmail" || value === "proxiedmail" || value === "cloudflare" || value === "hotmail" || value === "gptmail" || value === "mailapi-icu" || value === "freemail") {
         return value;
     }
     return DEFAULT_CONFIG.provider;
@@ -175,6 +184,18 @@ function loadConfig(): AppConfig {
             typeof parsed.gptMailDomain === "string"
                 ? parsed.gptMailDomain.trim()
                 : DEFAULT_CONFIG.gptMailDomain,
+        freemailApiBaseUrl:
+            typeof parsed.freemailApiBaseUrl === "string"
+                ? parsed.freemailApiBaseUrl.trim()
+                : DEFAULT_CONFIG.freemailApiBaseUrl,
+        freemailApiToken:
+            typeof parsed.freemailApiToken === "string"
+                ? parsed.freemailApiToken.trim()
+                : DEFAULT_CONFIG.freemailApiToken,
+        freemailDeleteDomain:
+            typeof parsed.freemailDeleteDomain === "string"
+                ? parsed.freemailDeleteDomain.trim()
+                : DEFAULT_CONFIG.freemailDeleteDomain,
         "2925EmailAddress":
             typeof parsed["2925EmailAddress"] === "string"
                 ? parsed["2925EmailAddress"].trim()

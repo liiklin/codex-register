@@ -11,7 +11,8 @@
     "check": "node bundle/check-auth-quota.cjs",
     "check:cpa": "node bundle/check-auth-quota.cjs --cpa",
     "check:cpatools": "node bundle/check-auth-quota.cjs --cpatools",
-    "batch": "node bundle/batch-register.cjs"
+    "batch": "node bundle/batch-register.cjs",
+    "freemail:bulk-delete": "node bundle/freemail-bulk-delete.cjs"
   },
   "dependencies": {
     "chromium-bidi": "^15.0.0",

@@ -5,6 +5,7 @@ export default defineConfig({
         index: "src/index.ts",
         "check-auth-quota": "src/check-auth-quota.ts",
         "batch-register": "src/batch-register.ts",
+        "freemail-bulk-delete": "src/freemail-bulk-delete.ts",
     },
     outDir: "bundle",
     format: ["cjs"],

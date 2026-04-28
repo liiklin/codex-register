@@ -70,6 +70,13 @@ npm run dev -- --n 1
 npm run build
 ```
 
+### 清空 freemail 邮箱
+
+```bash
+npm run freemail:bulk-delete -- --dry-run
+npm run freemail:bulk-delete -- --page-size 200 --concurrency 20
+```
+
 ### 运行构建后的主程序
 
 ```bash
@@ -109,6 +116,27 @@ npm run start -- [参数]
     - 直接注册并授权
 - `--st`
     - Sentinel 使用浏览器模式
+
+### freemail 批量删除参数
+
+- `--page-size <数量>`
+    - 每页拉取多少个邮箱，默认 `500`
+- `--concurrency <数量>`
+    - 删除并发数，默认 `20`
+- `--limit <数量>`
+    - 最多处理多少个邮箱，默认不限制
+- `--dry-run`
+    - 只列出准备删除的邮箱，不真正删除
+- `--verbose`
+    - 输出每个邮箱的删除结果
+
+指定域名请写进 `config.json`：
+
+```json
+{
+  "freemailDeleteDomain": "xxud.xyz"
+}
+```
 
 ### 常用示例
 
@@ -281,6 +309,7 @@ npm run check:cpatools -- --limit 50 -c 20 --table
 - `proxiedmail`
 - `gmail`
 - `gptmail`
+- `freemail`
 - `hotmail`
 - `mailapi-icu`
 - `2925`
@@ -377,7 +406,32 @@ someone@hotmail.com----YourPassword123----a016c639-6112-4efe-b2cd-8ef74231bb97--
 
 - [GPTMail API 文档](https://mail.chatgpt.org.uk/zh/api)
 
-### 5）mailapi-icu
+### 5）freemail
+
+```json
+{
+  "provider": "freemail",
+  "freemailApiBaseUrl": "https://mailfree.117280858.workers.dev",
+  "freemailApiToken": "your_freemail_token",
+  "freemailDeleteDomain": "xxud.xyz"
+}
+```
+
+程序会：
+
+- 调用 Freemail 的 `/api/generate?length=20` 生成邮箱
+- 轮询 `/api/emails?mailbox=...&limit=10` 抓取验证码邮件
+- 自动提取 6 位 OpenAI / ChatGPT 验证码
+- 在需要时可调用 `/api/mailboxes?address=...` 删除邮箱
+
+如果需要批量清空 freemail 邮箱：
+
+```bash
+npm run freemail:bulk-delete -- --dry-run
+npm run freemail:bulk-delete -- --page-size 500 --concurrency 20
+```
+
+### 6）mailapi-icu
 
 ```json
 {
@@ -412,7 +466,7 @@ another@example.com----https://mailapi.icu/key?orderNo=202604260002
 - 从该行的 MailAPI 地址里提取 `orderNo`
 - 轮询 `type=json` 的取件结果并提取验证码
 
-### 6）2925
+### 7）2925
 
 ```json
 {
@@ -422,7 +476,7 @@ another@example.com----https://mailapi.icu/key?orderNo=202604260002
 }
 ```
 
-### 7）cloudflare
+### 8）cloudflare
 
 ```json
 {
@@ -456,6 +510,10 @@ Cloudflare Worker 部署说明见：[MAIL_WORKER_DEPLOY.md](./MAIL_WORKER_DEPLOY
     - GPTMail API Key
 - `gptMailDomain`
     - GPTMail 指定生成邮箱时使用的域名，可留空
+- `freemailApiBaseUrl`
+    - Freemail API 基础地址
+- `freemailApiToken`
+    - Freemail Bearer Token
 - `hotmail`
     - 使用 `./hotmail/tokens.txt` 作为 Hotmail/Outlook 账号来源
 - `mailapi-icu`

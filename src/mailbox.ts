@@ -1,6 +1,7 @@
 import {appConfig, type MailProviderName} from "./config.js";
 import {create2925Provider} from "./mail/2925.js";
 import {createCloudflareProvider} from "./mail/cloudflare.js";
+import {createFreemailProvider} from "./mail/freemail.js";
 import {createGmailProvider} from "./mail/gmail.js";
 import {createGPTMailProvider} from "./mail/gptmail.js";
 import {createHotmailProvider} from "./mail/hotmail.js";
@@ -28,6 +29,8 @@ function createProvider(): EmailCodeProvider {
       return createGmailProvider();
     case "gptmail":
       return createGPTMailProvider();
+    case "freemail":
+      return createFreemailProvider();
     case "hotmail":
       return createHotmailProvider();
     case "mailapi-icu":
