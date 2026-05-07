@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:phone-first": "tsx src/phone-first-register.ts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "build": "tsup --config tsup.config.ts",
     "start": "node bundle/index.cjs",
+    "start:phone-first": "node bundle/phone-first-register.cjs",
     "check": "node bundle/check-auth-quota.cjs",
     "check:cpa": "node bundle/check-auth-quota.cjs --cpa",
     "check:cpatools": "node bundle/check-auth-quota.cjs --cpatools",

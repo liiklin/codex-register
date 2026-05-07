@@ -83,6 +83,29 @@ npm run freemail:bulk-delete -- --page-size 200 --concurrency 20
 npm run start
 ```
 
+### Phone-first 注册模式
+
+保留原有命令不变，同时新增一组 phone-first 命令：
+
+```bash
+npm run dev:phone-first
+npm run dev:phone-first -- --n 1
+npm run start:phone-first
+```
+
+这个模式会：
+
+1. 先按 `heroSMSBasePrice ~ heroSMSMaxPrice` 尝试申请号码
+2. 拿到号后再进入注册
+3. 如果当前轮没有可用号码，则等待 `loopDelayMs` 后继续下一轮
+
+说明：
+
+- 旧的 `npm run dev` / `npm run start` 行为完全不变
+- phone-first 模式依赖已配置的 `heroSMSApiKey`
+- 默认仍沿用原注册方式：先注册、再登录授权；只有传 `--sign` 才走直接注册授权
+- `phone-first` 命令不支持 `--auth`，登录授权请继续使用原有 `dev/start -- --auth`
+
 ### 检查授权额度
 
 ```bash
