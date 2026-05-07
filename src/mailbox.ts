@@ -5,7 +5,7 @@ import {createFreemailProvider} from "./mail/freemail.js";
 import {createGmailProvider} from "./mail/gmail.js";
 import {createGPTMailProvider} from "./mail/gptmail.js";
 import {createHotmailProvider} from "./mail/hotmail.js";
-import {createMailApiIcuProvider} from "./mail/mailapi-icu.js";
+import {createMailApiIcuProvider, registerMailApiIcuAccountBinding} from "./mail/mailapi-icu.js";
 import {createProxiedMailProvider} from "./mail/proxiedmail.js";
 
 export interface EmailCodeProvider {
@@ -13,6 +13,11 @@ export interface EmailCodeProvider {
   getEmailVerificationCode(email: string): Promise<string>;
   markEmailAddressUsed?(email: string, password: string): Promise<void>;
   discardEmailAddress?(email: string): Promise<void>;
+}
+
+export interface EmailAccountBinding {
+  email: string;
+  lineRaw: string;
 }
 
 export const MAILBOX_CONFIG: {
@@ -60,4 +65,14 @@ export async function markEmailAddressUsed(email: string, password: string): Pro
 
 export async function discardEmailAddress(email: string): Promise<void> {
   await provider.discardEmailAddress?.(email);
+}
+
+export function registerEmailAccountBinding(binding: EmailAccountBinding): void {
+  switch (MAILBOX_CONFIG.provider) {
+    case "mailapi-icu":
+      registerMailApiIcuAccountBinding(binding);
+      return;
+    default:
+      return;
+  }
 }

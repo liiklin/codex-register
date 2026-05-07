@@ -1,7 +1,7 @@
 import {appConfig} from "./config.js";
-import {runAuthBatchWithDeps} from "./auth-batch.js";
+import {type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
-import {discardEmailAddress, markEmailAddressUsed} from "./mailbox.js";
+import {discardEmailAddress, markEmailAddressUsed, registerEmailAccountBinding} from "./mailbox.js";
 import {readManualSmsActivationArgs} from "./manual-sms-activation.js";
 import {OpenAIClient} from "./openai.js";
 import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
@@ -139,6 +139,14 @@ async function runAuthForEmail(email: string, manualOtp: boolean): Promise<void>
     }
 }
 
+async function runAuthForBatchEntry(entry: AuthBatchEntry, manualOtp: boolean): Promise<void> {
+    registerEmailAccountBinding({
+        email: entry.email,
+        lineRaw: entry.lineRaw,
+    });
+    await runAuthForEmail(entry.email, manualOtp);
+}
+
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
     const manualOtp = hasFlag("--otp");
@@ -256,8 +264,8 @@ async function main() {
         ensureManualSmsActivationNotUsedWithAuthBatch();
         await runAuthBatchWithDeps({
             providerName: appConfig.provider,
-            runAuthForEmail: async (email) => {
-                await runAuthForEmail(email, manualOtp);
+            runAuthForEmail: async (entry) => {
+                await runAuthForBatchEntry(entry, manualOtp);
             },
         });
         return;

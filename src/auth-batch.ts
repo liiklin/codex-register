@@ -3,6 +3,11 @@ import path from "node:path";
 
 const REG_ACCOUNTS_FILE_NAME = "reg_accounts.txt";
 
+export interface AuthBatchEntry {
+  email: string;
+  lineRaw: string;
+}
+
 export interface AuthBatchSummary {
   total: number;
   successCount: number;
@@ -11,7 +16,7 @@ export interface AuthBatchSummary {
 
 export interface RunAuthBatchDeps {
   providerName: string;
-  runAuthForEmail: (email: string) => Promise<void>;
+  runAuthForEmail: (entry: AuthBatchEntry) => Promise<void>;
   cwd?: string;
   log?: (message: string) => void;
   error?: (message: string, error: unknown) => void;
@@ -21,7 +26,7 @@ export function resolveAuthBatchFilePath(providerName: string, cwd = process.cwd
   return path.resolve(cwd, providerName, REG_ACCOUNTS_FILE_NAME);
 }
 
-export async function loadAuthBatchEmails(providerName: string, cwd = process.cwd()): Promise<string[]> {
+export async function loadAuthBatchEntries(providerName: string, cwd = process.cwd()): Promise<AuthBatchEntry[]> {
   const filePath = resolveAuthBatchFilePath(providerName, cwd);
   let raw: string;
   try {
@@ -35,12 +40,12 @@ export async function loadAuthBatchEmails(providerName: string, cwd = process.cw
   }
 
   const seen = new Set<string>();
-  const emails = raw
+  const entries = raw
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((email) => {
-      const normalized = email.toLowerCase();
+    .map((line) => parseAuthBatchEntryLine(line))
+    .filter((entry): entry is AuthBatchEntry => entry != null)
+    .filter((entry) => {
+      const normalized = entry.email.toLowerCase();
       if (seen.has(normalized)) {
         return false;
       }
@@ -48,39 +53,61 @@ export async function loadAuthBatchEmails(providerName: string, cwd = process.cw
       return true;
     });
 
-  if (!emails.length) {
+  if (!entries.length) {
     throw new Error(`批量授权邮箱文件为空: ${filePath}`);
   }
 
-  return emails;
+  return entries;
+}
+
+export async function loadAuthBatchEmails(providerName: string, cwd = process.cwd()): Promise<string[]> {
+  const entries = await loadAuthBatchEntries(providerName, cwd);
+  return entries.map((entry) => entry.email);
+}
+
+function parseAuthBatchEntryLine(line: string): AuthBatchEntry | null {
+  const trimmedLine = line.trim();
+  if (!trimmedLine) {
+    return null;
+  }
+
+  const email = trimmedLine.includes("----")
+    ? trimmedLine.slice(0, trimmedLine.indexOf("----")).trim()
+    : trimmedLine;
+
+  const resolvedEmail = email.includes("@") ? email : trimmedLine;
+  return {
+    email: resolvedEmail,
+    lineRaw: trimmedLine,
+  };
 }
 
 export async function runAuthBatchWithDeps(deps: RunAuthBatchDeps): Promise<AuthBatchSummary> {
-  const emails = await loadAuthBatchEmails(deps.providerName, deps.cwd);
+  const entries = await loadAuthBatchEntries(deps.providerName, deps.cwd);
   const log = deps.log ?? console.log;
   const error = deps.error ?? ((message: string, reason: unknown) => console.error(message, reason));
 
   let successCount = 0;
   let failCount = 0;
 
-  log(`准备批量授权：${emails.length} 个邮箱，provider=${deps.providerName}`);
+  log(`准备批量授权：${entries.length} 个邮箱，provider=${deps.providerName}`);
 
-  for (let index = 0; index < emails.length; index += 1) {
-    const email = emails[index];
-    log(`[${index + 1}/${emails.length}] 开始授权 ${email}`);
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    log(`[${index + 1}/${entries.length}] 开始授权 ${entry.email}`);
     try {
-      await deps.runAuthForEmail(email);
+      await deps.runAuthForEmail(entry);
       successCount += 1;
     } catch (reason) {
       failCount += 1;
-      error(`[❌️授权失败] 邮箱：${email}`, reason);
+      error(`[❌️授权失败] 邮箱：${entry.email}`, reason);
     }
   }
 
-  log(`批量授权结束: 总数=${emails.length} 成功=${successCount} 失败=${failCount}`);
+  log(`批量授权结束: 总数=${entries.length} 成功=${successCount} 失败=${failCount}`);
 
   return {
-    total: emails.length,
+    total: entries.length,
     successCount,
     failCount,
   };

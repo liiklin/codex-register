@@ -29,6 +29,11 @@ interface MailApiIcuMessage {
   date?: string;
 }
 
+export interface MailApiIcuAccountBinding {
+  email: string;
+  lineRaw: string;
+}
+
 const MAILAPI_ICU_DIR = path.resolve(process.cwd(), "mailapi-icu");
 const MAILAPI_ICU_TOKENS_FILE = path.join(MAILAPI_ICU_DIR, "tokens.txt");
 const MAILAPI_ICU_USED_FILE = path.join(MAILAPI_ICU_DIR, "used.txt");
@@ -103,6 +108,20 @@ function parseTokenLine(line: string, index: number): MailApiIcuAccount | null {
     orderNo,
     lineRaw: line,
   };
+}
+
+export function registerMailApiIcuAccountBinding(binding: MailApiIcuAccountBinding): void {
+  const parsed = parseTokenLine(binding.lineRaw, 0);
+  if (!parsed) {
+    throw new Error(`MailAPI.ICU 账号行格式不正确: ${binding.lineRaw}`);
+  }
+
+  const normalizedTargetEmail = normalizeEmail(binding.email);
+  if (parsed.email !== normalizedTargetEmail) {
+    throw new Error(`MailAPI.ICU 账号行邮箱与目标邮箱不匹配: ${binding.email}`);
+  }
+
+  emailAccountMap.set(normalizedTargetEmail, parsed);
 }
 
 async function loadAccounts(): Promise<MailApiIcuAccount[]> {
