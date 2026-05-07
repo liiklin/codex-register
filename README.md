@@ -133,12 +133,40 @@ npm run start -- [参数]
     - 指定单个邮箱执行, 配合 `--otp` 使用
 - `--auth`
     - 只登录并生成授权文件，必须配合 `--email`
+- `--auth-batch`
+    - 批量登录并生成授权文件，按当前 `provider` 对应目录下的 `reg_accounts.txt` 顺序处理
 - `--otp`
     - 手动输入邮箱验证码
 - `--sign`
     - 直接注册并授权
 - `--st`
     - Sentinel 使用浏览器模式
+
+### 批量授权账号文件
+
+当使用 `--auth-batch` 时，程序会按 `config.json.provider` 读取对应供应商目录下的 `reg_accounts.txt`。
+
+例如：
+
+- `provider=mailapi-icu` → `mailapi-icu/reg_accounts.txt`
+- `provider=hotmail` → `hotmail/reg_accounts.txt`
+
+文件格式为**一行一个已注册但未授权的邮箱**：
+
+```text
+ZacharyPerez3217@hotmail.com
+alice@example.com
+bob@example.com
+```
+
+说明：
+
+- 空行会自动跳过
+- 重复邮箱会自动去重
+- 按文件顺序串行执行
+- 单个邮箱失败不会中断整批
+- 目前 `--auth-batch` 不支持与 `--email`、`--auth`、`--sign` 同时使用
+- 目前 `--auth-batch` 也不支持 `--sms-activation-id` / `--sms-phone`
 
 ### freemail 批量删除参数
 
@@ -180,6 +208,31 @@ npm run dev -- --email your_mail@example.com
 ```bash
 npm run dev -- --email your_mail@example.com --auth
 ```
+
+#### 指定现有接码激活，只做登录授权
+
+```bash
+npm run dev -- --email your_mail@example.com --auth --sms-activation-id 353347172 --sms-phone 6283194229141
+```
+
+说明：
+
+- `--sms-activation-id` 和 `--sms-phone` 必须同时提供
+- `--sms-phone` 可以带 `+`，程序会自动归一化
+- 如果流程根本没走到短信验证，程序只会本地丢弃这次手动注入的 lease，不会提前结束 HeroSMS activation
+
+#### 批量登录授权
+
+```bash
+npm run dev -- --auth-batch
+```
+
+这个模式会：
+
+1. 按当前 `provider` 读取对应目录下的 `reg_accounts.txt`
+2. 串行逐个执行现有单账号 `--auth` 的完整授权流程
+3. 复用现有邮箱验证码、短信接码、授权保存逻辑
+4. 最后输出总数 / 成功 / 失败汇总
 
 #### 指定邮箱，手动输入验证码
 
