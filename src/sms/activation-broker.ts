@@ -70,8 +70,11 @@ export interface ActivationBrokerState<Activation extends SmsActivation> {
   round: number;
   usage: ActivationUsageStats | null;
   lastReleasedUsage: ActivationUsageStats | null;
+  pendingReleaseAction: PendingReleaseAction | null;
   history: ActivationBrokerHistoryStats;
 }
+
+type PendingReleaseAction = "complete" | "withdraw" | "discard";
 
 function getExpiryTime(expiresAt?: Date): number | null {
   if (!expiresAt) {
@@ -105,6 +108,7 @@ export class ActivationBroker<
   private round = 0;
   private usage: ActivationUsageStats | null = null;
   private lastReleasedUsage: ActivationUsageStats | null = null;
+  private pendingReleaseAction: PendingReleaseAction | null = null;
   private activations: ActivationUsageStats[] = []
   private history: ActivationBrokerHistoryStats = {
     totalActivationsAllocated: 0,
@@ -130,6 +134,7 @@ export class ActivationBroker<
       round: this.round,
       usage: this.usage,
       lastReleasedUsage: this.lastReleasedUsage,
+      pendingReleaseAction: this.pendingReleaseAction,
       history: this.getHistory(),
     };
   }
@@ -155,6 +160,8 @@ export class ActivationBroker<
   }
 
   async getActivation(): Promise<ActivationLease> {
+    await this.retryPendingReleaseIfNeeded();
+
     if (!this.currentActivation || this.isExpired(this.currentActivation)) {
       const activation = await this.provider.requestActivation();
       this.activate(activation);
@@ -239,6 +246,7 @@ export class ActivationBroker<
       rotate ||
       activation.canRequestAnotherSms === false ||
       this.isExpired(activation) ||
+      this.usage.successCount >= 3 ||
       this.usage.failureCount >= 3
     ) {
       await this.rotateActivation(outcome)
@@ -265,7 +273,7 @@ export class ActivationBroker<
 
       const action = shouldCancelAndWithdraw ? 'withdraw' : 'complete'
       if (shouldCancelAndWithdraw) {
-        await this.cancelCurrentActivation()
+        await this.withdrawCurrentActivation()
       } else {
         await this.completeCurrentActivation()
       }
@@ -276,25 +284,46 @@ export class ActivationBroker<
 
   async completeCurrentActivation(): Promise<string> {
     const activation = this.requireCurrentActivation();
+    this.pendingReleaseAction = "complete";
     try {
       const result = await this.provider.completeActivation(activation.activationId);
       this.history.totalCompletedActivations += 1;
       this.recordPhoneRelease(activation.phoneNumber, "complete");
-      return result;
-    } finally {
+      this.pendingReleaseAction = null;
       this.reset();
+      return result;
+    } catch (error) {
+      throw error;
     }
   }
 
   async cancelCurrentActivation(): Promise<string> {
     const activation = this.requireCurrentActivation();
+    this.pendingReleaseAction = "discard";
     try {
       const result = await this.provider.cancelActivation(activation.activationId);
       this.history.totalDiscardedActivations += 1;
       this.recordPhoneRelease(activation.phoneNumber, "discard");
-      return result;
-    } finally {
+      this.pendingReleaseAction = null;
       this.reset();
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async withdrawCurrentActivation(): Promise<string> {
+    const activation = this.requireCurrentActivation();
+    this.pendingReleaseAction = "withdraw";
+    try {
+      const result = await this.provider.cancelAndWithdraw(activation.activationId);
+      this.history.totalWithdrawnActivations += 1;
+      this.recordPhoneRelease(activation.phoneNumber, "withdraw");
+      this.pendingReleaseAction = null;
+      this.reset();
+      return result;
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -383,7 +412,13 @@ export class ActivationBroker<
           const verification = await this.provider.waitForVerificationCode(
             activation.activationId,
           );
-          await this.markAsSucceed();
+          try {
+            await this.markAsSucceed();
+          } catch (releaseError) {
+            console.warn(
+              `[pollSMSCode] 验证码已收到，但后续释放 activation 失败 activationId=${activation.activationId}: ${String(releaseError instanceof Error ? releaseError.message : releaseError)}`,
+            );
+          }
           return {
             code: verification.code,
             source: verification.source,
@@ -392,7 +427,7 @@ export class ActivationBroker<
             rawStatus: verification.rawStatus,
           };
         } catch (e) {
-          await this.markAsFailed(e instanceof HeroSmsWaitTimeoutError);
+          await this.markAsFailed(e instanceof HeroSmsWaitTimeoutError ? false : undefined);
           throw e;
         }
       },
@@ -408,6 +443,25 @@ export class ActivationBroker<
     this.attemptActive = false;
     this.round = 0;
     this.usage = null;
+    this.pendingReleaseAction = null;
+  }
+
+  private async retryPendingReleaseIfNeeded(): Promise<void> {
+    if (!this.currentActivation || !this.pendingReleaseAction) {
+      return;
+    }
+
+    if (this.pendingReleaseAction === "complete") {
+      await this.completeCurrentActivation();
+      return;
+    }
+
+    if (this.pendingReleaseAction === "withdraw") {
+      await this.withdrawCurrentActivation();
+      return;
+    }
+
+    await this.cancelCurrentActivation();
   }
 
   private getPhoneStats(phoneNumber: string): PhoneUsageStats {

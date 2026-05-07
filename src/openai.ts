@@ -29,13 +29,15 @@ import {
 import {getEmailAddress, getEmailVerificationCode, MAILBOX_CONFIG} from "./mailbox.js";
 import {fetchSentinelToken} from "./sentinel.js";
 import { pkceCodeChallenge, randomUrlSafeString } from "./utils.js";
-import {ISMSActivationBroker} from "./sms/activation-broker.js";
+import {ActivationLease, ISMSActivationBroker} from "./sms/activation-broker.js";
+import {HeroSmsWaitTimeoutError} from "./sms/heroSMS.js";
 
 type FetchLike = typeof fetch;
 
 const DEFAULT_INSECURE_TLS = true;
 const FETCH_RETRY_COUNT = 3;
 const FETCH_RETRY_DELAY_MS = 1500;
+const PHONE_VERIFICATION_MAX_ROUNDS = 3;
 
 function resolveProxyUrl(): string {
     return appConfig.defaultProxyUrl;
@@ -195,7 +197,8 @@ export interface OpenAIClientOptions {
     deviceProfile?: DeviceProfile;
     manualMode?: boolean;
     signupScreenHint?: string;
-    smsBroker?: ISMSActivationBroker
+    smsBroker?: ISMSActivationBroker;
+    preAcquiredPhoneLease?: ActivationLease;
 }
 
 export class OpenAIClient {
@@ -211,10 +214,13 @@ export class OpenAIClient {
     state = "";
     codeVerifier = "";
     deviceID = "";
-    readonly smsBroker?: ISMSActivationBroker
+    readonly smsBroker?: ISMSActivationBroker;
+    private preAcquiredPhoneLease?: ActivationLease;
+    private preAcquiredPhoneLeaseUsed = false;
 
     constructor(options: OpenAIClientOptions) {
         this.smsBroker = options.smsBroker;
+        this.preAcquiredPhoneLease = options.preAcquiredPhoneLease;
         this.email = options.email?.trim() ?? "";
         this.password = options.password;
         this.deviceProfile = options.deviceProfile
@@ -251,12 +257,25 @@ export class OpenAIClient {
             .includes("phone_number_in_use");
     }
 
-    private async requestPhoneOtpWithRetry(progress: {current: number | string; total: number}) {
-        if (!this.smsBroker) {
+    didUsePreAcquiredPhoneLease(): boolean {
+        return this.preAcquiredPhoneLeaseUsed;
+    }
+
+    async requestPhoneOtpWithRetry(progress: {current: number | string; total: number}) {
+        if (!this.smsBroker && !this.preAcquiredPhoneLease) {
             throw new Error("未配置 SMS provider，无法进行短信验证");
         }
 
-        let lease = await this.smsBroker.getActivation();
+        let lease = this.preAcquiredPhoneLease;
+        if (lease) {
+            this.preAcquiredPhoneLeaseUsed = true;
+            this.preAcquiredPhoneLease = undefined;
+        } else {
+            if (!this.smsBroker) {
+                throw new Error("缺少短信 broker，无法重新分配号码");
+            }
+            lease = await this.smsBroker.getActivation();
+        }
 
         for (let attempt = 1; attempt <= 2; attempt += 1) {
             const phoneNumber = `+${lease.phoneNumber}`;
@@ -299,6 +318,45 @@ export class OpenAIClient {
         }
 
         throw new Error("发送短信验证码失败");
+    }
+
+    private async completePhoneVerificationWithRetry(progress: {
+        sendCurrent: number | string;
+        waitCurrent: number | string;
+        submitCurrent: number | string;
+        total: number;
+    }): Promise<string> {
+        let lastTimeoutError: HeroSmsWaitTimeoutError | null = null;
+
+        for (let round = 1; round <= PHONE_VERIFICATION_MAX_ROUNDS; round += 1) {
+            const {continueURL, lease} = await this.requestPhoneOtpWithRetry({
+                current: progress.sendCurrent,
+                total: progress.total,
+            });
+
+            this.logProgress(
+                progress.waitCurrent,
+                progress.total,
+                round > 1 ? `等待短信验证码，第 ${round} 轮` : "等待短信验证码",
+            );
+
+            try {
+                const {code} = await lease.waitForVerificationCode();
+                this.logProgress(progress.submitCurrent, progress.total, `提交短信验证，code=[${code}]`);
+                return await this.validatePhone(code, continueURL);
+            } catch (error) {
+                if (!(error instanceof HeroSmsWaitTimeoutError) || round === PHONE_VERIFICATION_MAX_ROUNDS) {
+                    throw error;
+                }
+
+                lastTimeoutError = error;
+                console.log(
+                    `[pollSMSCode] 短信轮询超时，准备继续下一轮发码与接码 round=${round + 1}/${PHONE_VERIFICATION_MAX_ROUNDS}`,
+                );
+            }
+        }
+
+        throw lastTimeoutError ?? new Error("短信验证码验证失败");
     }
 
     async authLoginHTTP(): Promise<AuthLoginResult> {
@@ -361,15 +419,12 @@ export class OpenAIClient {
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
             this.logProgress('4-a', totalSteps, "进入短信验证流程，从接码平台获取号码");
-            const {continueURL: nextContinueURL, lease} = await this.requestPhoneOtpWithRetry({
-                current: '4-b',
+            continueURL = await this.completePhoneVerificationWithRetry({
+                sendCurrent: '4-b',
+                waitCurrent: '4-c',
+                submitCurrent: '4-d',
                 total: totalSteps,
             });
-            continueURL = nextContinueURL;
-            this.logProgress('4-c', totalSteps, `等待短信验证码`);
-            const { code } = await lease.waitForVerificationCode();
-            this.logProgress('4-d', totalSteps, `提交短信验证，code=[${code}]`);
-            continueURL = await this.validatePhone(code);
         }
 
         if (continueURL === `${AUTH_BASE_URL}/sign-in-with-chatgpt/codex/consent`) {
@@ -480,13 +535,16 @@ export class OpenAIClient {
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
             this.logProgress(step++, totalSteps++, "进入短信验证流程，从接码平台获取号码");
-            const sendStep = {current: step++, total: totalSteps++};
-            const {continueURL: nextContinueURL, lease} = await this.requestPhoneOtpWithRetry(sendStep);
-            continueURL = nextContinueURL;
-            this.logProgress(step++, totalSteps++, `等待短信验证码`);
-            const { code } = await lease.waitForVerificationCode();
-            this.logProgress(step++, totalSteps++, `提交短信验证，code=[${code}]`);
-            continueURL = await this.validatePhone(code);
+            const sendCurrent = step++;
+            const waitCurrent = step++;
+            const submitCurrent = step++;
+            totalSteps += 3;
+            continueURL = await this.completePhoneVerificationWithRetry({
+                sendCurrent,
+                waitCurrent,
+                submitCurrent,
+                total: totalSteps,
+            });
         }
 
         if (continueURL === `${AUTH_BASE_URL}/about-you`) {
@@ -671,10 +729,10 @@ export class OpenAIClient {
         return payload.continue_url;
     }
 
-    async validatePhone(code: string) {
+    async validatePhone(code: string, continueURL = `${AUTH_BASE_URL}/phone-verification`) {
         const response = await this.postJSON(`${AUTH_BASE_URL}/api/accounts/phone-otp/validate`,
           { code: code },
-          { referer: `${AUTH_BASE_URL}/phone-verification` },
+          { referer: continueURL },
         );
         if (!response.ok) {
             throw new Error(
