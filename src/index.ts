@@ -1,6 +1,8 @@
 import {appConfig} from "./config.js";
+import {runAuthBatchWithDeps} from "./auth-batch.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed} from "./mailbox.js";
+import {readManualSmsActivationArgs} from "./manual-sms-activation.js";
 import {OpenAIClient} from "./openai.js";
 import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
 import {createSMSBroker} from "./sms/index.js";
@@ -87,6 +89,56 @@ function isMailApiIcuAuthFailedError(error: unknown): boolean {
         .some((text) => text.includes("MailAPI.ICU 请求失败: 401") || text.includes("邮箱认证失败"));
 }
 
+async function createManualSmsLeaseIfProvided() {
+    const manualSmsActivation = readManualSmsActivationArgs(process.argv);
+    if (!manualSmsActivation) {
+        return undefined;
+    }
+
+    if (!smsBroker?.useExistingActivation) {
+        throw new Error("使用 --sms-activation-id 和 --sms-phone 时必须已配置可用的 HeroSMS broker");
+    }
+
+    return await smsBroker.useExistingActivation(manualSmsActivation);
+}
+
+async function discardUnusedManualSmsLeaseIfNeeded(client: OpenAIClient, manualLeaseProvided: boolean): Promise<void> {
+    if (!manualLeaseProvided || client.didUsePreAcquiredPhoneLease()) {
+        return;
+    }
+
+    smsBroker?.discardCurrentActivation?.();
+}
+
+function ensureManualSmsActivationNotUsedWithAuthBatch(): void {
+    if (readManualSmsActivationArgs(process.argv)) {
+        throw new Error("--auth-batch 暂不支持 --sms-activation-id 和 --sms-phone");
+    }
+}
+
+async function runAuthForEmail(email: string, manualOtp: boolean): Promise<void> {
+    const preAcquiredPhoneLease = await createManualSmsLeaseIfProvided();
+    const deviceProfile = generateRandomDeviceProfile();
+    const client = new OpenAIClient({
+        email,
+        password: appConfig.defaultPassword,
+        deviceProfile,
+        manualMode: manualOtp,
+        smsBroker,
+        preAcquiredPhoneLease,
+    });
+    try {
+        const result = await client.authLoginHTTP();
+        await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
+        console.log(
+            `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
+        );
+    } catch (error) {
+        await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
+        throw error;
+    }
+}
+
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
     const manualOtp = hasFlag("--otp");
@@ -94,18 +146,21 @@ async function runOnce(): Promise<void> {
     const shouldRecycleGeneratedMailApiAccount = appConfig.provider === "mailapi-icu" && !email;
     const deviceProfile = generateRandomDeviceProfile();
     if (directSignupAuth) {
+        const preAcquiredPhoneLease = await createManualSmsLeaseIfProvided();
         const client = new OpenAIClient({
             email: email || undefined,
             password: appConfig.defaultPassword,
             deviceProfile,
             manualMode: manualOtp,
             signupScreenHint: "signup",
-            smsBroker
+            smsBroker,
+            preAcquiredPhoneLease,
         });
         let result;
         try {
             result = await client.authRegisterAndAuthorizeHTTP();
         } catch (error) {
+            await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
             if (shouldRecycleGeneratedMailApiAccount && client.email) {
                 if (isUserAlreadyExistsError(error) || isMailApiIcuAuthFailedError(error)) {
                     await discardEmailAddress(client.email);
@@ -116,6 +171,7 @@ async function runOnce(): Promise<void> {
         if (shouldRecycleGeneratedMailApiAccount && client.email) {
             await markEmailAddressUsed(client.email, appConfig.defaultPassword);
         }
+        await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
         console.log(
             `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
         );
@@ -140,17 +196,20 @@ async function runOnce(): Promise<void> {
         throw error;
     }
 
+    const preAcquiredPhoneLease = await createManualSmsLeaseIfProvided();
     const loginClient = new OpenAIClient({
         email: registerClient.email,
         password: appConfig.defaultPassword,
         deviceProfile,
         manualMode: manualOtp,
-        smsBroker
+        smsBroker,
+        preAcquiredPhoneLease,
     });
     let result;
     try {
         result = await loginClient.authLoginHTTP();
     } catch (error) {
+        await discardUnusedManualSmsLeaseIfNeeded(loginClient, Boolean(preAcquiredPhoneLease));
         if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
             if (isMailApiIcuAuthFailedError(error)) {
                 await discardEmailAddress(loginClient.email);
@@ -161,6 +220,7 @@ async function runOnce(): Promise<void> {
     if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
         await markEmailAddressUsed(loginClient.email, appConfig.defaultPassword);
     }
+    await discardUnusedManualSmsLeaseIfNeeded(loginClient, Boolean(preAcquiredPhoneLease));
     console.log(
         `[✅️授权成功] 邮箱：${loginClient.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
     );
@@ -180,21 +240,26 @@ async function main() {
             throw new Error("使用 --auth 时必须同时指定 --email");
         }
         try {
-            const deviceProfile = generateRandomDeviceProfile();
-            const client = new OpenAIClient({
-                email: manualEmail,
-                password: appConfig.defaultPassword,
-                deviceProfile,
-                manualMode: manualOtp,
-                smsBroker,
-            });
-            const result = await client.authLoginHTTP();
-            console.log(
-                `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
-            );
+            await runAuthForEmail(manualEmail, manualOtp);
         } catch (error) {
             console.error(`[❌️授权失败]`, error);
         }
+        return;
+    }
+
+    const authBatch = hasFlag("--auth-batch");
+    if (authBatch) {
+        if (manualEmail || authOnly || hasFlag("--sign")) {
+            throw new Error("--auth-batch 不能与 --email、--auth 或 --sign 同时使用");
+        }
+
+        ensureManualSmsActivationNotUsedWithAuthBatch();
+        await runAuthBatchWithDeps({
+            providerName: appConfig.provider,
+            runAuthForEmail: async (email) => {
+                await runAuthForEmail(email, manualOtp);
+            },
+        });
         return;
     }
 

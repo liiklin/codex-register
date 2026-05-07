@@ -59,6 +59,7 @@ export interface ActivationLease extends SmsActivation {
 
 export interface ISMSActivationBroker {
   getActivation(): Promise<ActivationLease>;
+  useExistingActivation?(activation: SmsActivation): Promise<ActivationLease>;
   markAsSucceed(): Promise<void>;
   markAsFailed(rotate?: boolean): Promise<void>;
   discardCurrentActivation?(): void;
@@ -199,6 +200,18 @@ export class ActivationBroker<
 
     this.startAttempt();
     return this.buildLease(this.currentActivation, false, requestedAnotherSms);
+  }
+
+  async useExistingActivation(activation: Activation): Promise<ActivationLease> {
+    await this.retryPendingReleaseIfNeeded();
+
+    if (this.currentActivation || this.attemptActive) {
+      throw new Error("当前已有可用 activation，不能直接覆盖为指定 activation");
+    }
+
+    this.activate(activation);
+    this.startAttempt();
+    return this.buildLease(activation, true, false);
   }
 
   async markAsSucceed(): Promise<void> {
