@@ -17,6 +17,8 @@ const HERO_SMS_DEFAULT_POLL_ATTEMPTS = 24;
 const HERO_SMS_DEFAULT_POLL_INTERVAL_MS = 5000;
 const HERO_SMS_DEFAULT_NETWORK_RETRY_COUNT = 2;
 const HERO_SMS_DEFAULT_NETWORK_RETRY_DELAY_MS = 500;
+const HERO_SMS_NUMBER_ACQUIRE_RETRY_COUNT = 2;
+const HERO_SMS_NUMBER_ACQUIRE_RETRY_DELAY_MS = 1500;
 const HERO_SMS_CODE_PATTERN = /(?<!\d)(\d{4,8})(?!\d)/;
 
 interface DeliveredActivationSnapshot {
@@ -945,6 +947,7 @@ export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
       options: HeroSmsNumberRequestOptions,
     ): Promise<HeroSmsActivation> {
       let lastError: unknown = null;
+      let acquisitionRetryCount = 0;
 
       while (true) {
         const requestOptions = applyDynamicPrice(options);
@@ -959,9 +962,21 @@ export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
           return activation;
         } catch (error) {
           lastError = error;
+          if (isRetryableHeroSmsNetworkError(error)) {
+            if (acquisitionRetryCount < HERO_SMS_NUMBER_ACQUIRE_RETRY_COUNT) {
+              acquisitionRetryCount += 1;
+              console.log(
+                `[heroSMS] 申请号码网络失败，准备第 ${acquisitionRetryCount + 1}/${HERO_SMS_NUMBER_ACQUIRE_RETRY_COUNT + 1} 次整体重试: ${String(error instanceof Error ? error.message : error)}`,
+              );
+              await delay(HERO_SMS_NUMBER_ACQUIRE_RETRY_DELAY_MS);
+              continue;
+            }
+            throw error;
+          }
           if (!isNoNumbersApiError(error)) {
             throw error;
           }
+          acquisitionRetryCount = 0;
         }
 
         if (!raiseDynamicPrice()) {
