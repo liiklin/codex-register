@@ -3,7 +3,7 @@ import type {
   SmsProvider,
   SmsVerificationCode,
 } from "./provider.js";
-import {HeroSmsWaitTimeoutError} from "./heroSMS.js";
+import {HeroSmsApiError, HeroSmsWaitTimeoutError} from "./heroSMS.js";
 
 const ACTIVATION_CANCEL_AND_WITHDRAW_MIN_AGE_MS = 2 * 60 * 1000;
 
@@ -307,6 +307,12 @@ export class ActivationBroker<
       this.reset();
       return result;
     } catch (error) {
+      if (this.shouldDiscardAfterReleaseDenial(error)) {
+        console.warn(
+          `[pollSMSCode] release 被 HeroSMS 拒绝，改为本地丢弃 activationId=${activation.activationId}: ${String(error instanceof Error ? error.message : error)}`,
+        );
+        this.discardCurrentActivation();
+      }
       throw error;
     }
   }
@@ -337,6 +343,12 @@ export class ActivationBroker<
       this.reset();
       return result;
     } catch (error) {
+      if (this.shouldDiscardAfterReleaseDenial(error)) {
+        console.warn(
+          `[pollSMSCode] withdraw 被 HeroSMS 拒绝，改为本地丢弃 activationId=${activation.activationId}: ${String(error instanceof Error ? error.message : error)}`,
+        );
+        this.discardCurrentActivation();
+      }
       throw error;
     }
   }
@@ -476,6 +488,14 @@ export class ActivationBroker<
     }
 
     await this.cancelCurrentActivation();
+  }
+
+  private shouldDiscardAfterReleaseDenial(error: unknown): boolean {
+    return error instanceof HeroSmsApiError
+      && error.payload != null
+      && typeof error.payload === "object"
+      && "title" in error.payload
+      && String((error.payload as {title?: unknown}).title ?? "").trim() === "EARLY_CANCEL_DENIED";
   }
 
   private getPhoneStats(phoneNumber: string): PhoneUsageStats {
