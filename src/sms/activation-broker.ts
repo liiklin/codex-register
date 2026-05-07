@@ -61,6 +61,7 @@ export interface ISMSActivationBroker {
   getActivation(): Promise<ActivationLease>;
   markAsSucceed(): Promise<void>;
   markAsFailed(rotate?: boolean): Promise<void>;
+  discardCurrentActivation?(): void;
 }
 
 export interface ActivationBrokerState<Activation extends SmsActivation> {

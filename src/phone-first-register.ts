@@ -36,6 +36,7 @@ export interface AcquirePhoneThenRegisterDeps {
     getLease: () => Promise<ActivationLease>;
     register: (lease: ActivationLease) => Promise<RegisterAttemptOutcome>;
     markAsFailed: (rotate?: boolean) => Promise<void>;
+    discardCurrentActivation?: () => void | Promise<void>;
 }
 
 export interface PhoneFirstFlowClient {
@@ -53,6 +54,7 @@ export interface RunStandardPhoneFirstAuthDeps {
     createLoginClient: (email: string, lease?: ActivationLease) => PhoneFirstFlowClient;
     discardEmail: (email: string) => Promise<void>;
     markEmailUsed: (email: string, password: string) => Promise<void>;
+    discardUnusedPhoneLease?: () => void | Promise<void>;
 }
 
 function readArgValue(flag: string): string {
@@ -151,6 +153,22 @@ async function markAsFailedIfPossible(markAsFailed: (rotate?: boolean) => Promis
     }
 }
 
+async function discardCurrentActivationIfPossible(discardCurrentActivation?: () => void | Promise<void>): Promise<void> {
+    if (!discardCurrentActivation) {
+        return;
+    }
+
+    try {
+        await discardCurrentActivation();
+    } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        if (text.includes("当前没有可结束的 activation") || text.includes("当前没有可用 activation")) {
+            return;
+        }
+        throw error;
+    }
+}
+
 export function createConfiguredSMSBroker(configOverride: SMSBrokerConfigOverride = {}): ISMSActivationBroker | undefined {
     const apiKey = configOverride.apiKey ?? appConfig.heroSMSApiKey;
     if (!apiKey) {
@@ -203,7 +221,7 @@ export async function acquirePhoneThenRegisterWithDeps(deps: AcquirePhoneThenReg
     try {
         const result = await deps.register(lease);
         if (!result.phoneWasUsed) {
-            await markAsFailedIfPossible(deps.markAsFailed, true);
+            await discardCurrentActivationIfPossible(deps.discardCurrentActivation);
         }
         return {status: "success"};
     } catch (error) {
@@ -238,6 +256,9 @@ export async function runStandardPhoneFirstAuthWithDeps(deps: RunStandardPhoneFi
         );
         return {phoneWasUsed: loginClient.didUsePreAcquiredPhoneLease()};
     } catch (error) {
+        if (!loginClient.didUsePreAcquiredPhoneLease()) {
+            await discardCurrentActivationIfPossible(deps.discardUnusedPhoneLease);
+        }
         if (deps.shouldRecycleGeneratedMailApiAccount && loginClient.email) {
             if (isMailApiIcuAuthFailedError(error)) {
                 await deps.discardEmail(loginClient.email);
@@ -282,6 +303,9 @@ async function runPhoneFirstRegister(): Promise<PhoneFirstAttemptResult> {
                     );
                     return {phoneWasUsed: client.didUsePreAcquiredPhoneLease()};
                 } catch (error) {
+                    if (!client.didUsePreAcquiredPhoneLease()) {
+                        await discardCurrentActivationIfPossible(() => smsBroker.discardCurrentActivation?.());
+                    }
                     if (shouldRecycleGeneratedMailApiAccount && client.email) {
                         if (isUserAlreadyExistsError(error) || isMailApiIcuAuthFailedError(error)) {
                             await discardEmailAddress(client.email);
@@ -312,11 +336,13 @@ async function runPhoneFirstRegister(): Promise<PhoneFirstAttemptResult> {
                 }),
                 discardEmail: discardEmailAddress,
                 markEmailUsed: markEmailAddressUsed,
+                discardUnusedPhoneLease: () => smsBroker.discardCurrentActivation?.(),
             });
         },
         markAsFailed: async (rotate?: boolean) => {
             await smsBroker.markAsFailed(rotate);
         },
+        discardCurrentActivation: () => smsBroker.discardCurrentActivation?.(),
     });
 }
 
