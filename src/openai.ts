@@ -258,6 +258,11 @@ export class OpenAIClient {
             .includes("phone_number_in_use");
     }
 
+    private isFraudGuardError(error: unknown): boolean {
+        return String(error instanceof Error ? error.message : error)
+            .includes("fraud_guard");
+    }
+
     didUsePreAcquiredPhoneLease(): boolean {
         return this.preAcquiredPhoneLeaseUsed;
     }
@@ -296,6 +301,7 @@ export class OpenAIClient {
                     this.isPhoneMaxUsageExceededError(error) ||
                     this.isPhoneNumberInUseError(error)
                 );
+                const shouldDiscardAndRetry = attempt < 2 && this.isFraudGuardError(error);
 
                 if (shouldRotateAndRetry) {
                     const reason = this.isPhoneMaxUsageExceededError(error)
@@ -303,6 +309,14 @@ export class OpenAIClient {
                         : "phone_number_in_use";
                     console.log(`[add-phone] 号码 ${phoneNumber} 触发 ${reason}，准备轮换新号码重试`);
                     await this.smsBroker.markAsFailed(true);
+                    lease = await this.smsBroker.getActivation();
+                    console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
+                    continue;
+                }
+
+                if (shouldDiscardAndRetry) {
+                    console.log(`[add-phone] 号码 ${phoneNumber} 触发 fraud_guard，准备丢弃当前 activation 并换号重试`);
+                    this.smsBroker?.discardCurrentActivation?.();
                     lease = await this.smsBroker.getActivation();
                     console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
                     continue;
