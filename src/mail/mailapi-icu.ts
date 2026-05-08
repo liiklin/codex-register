@@ -8,6 +8,7 @@ import {
   type RequestInit as UndiciRequestInit,
 } from "undici";
 import { appConfig } from "../config.js";
+import type { EmailVerificationCodeRequestOptions } from "../mailbox.js";
 import { findLatestVerificationMail } from "./verification-matcher.js";
 
 interface MailApiIcuAccount {
@@ -270,6 +271,7 @@ async function fetchMessages(
 function findVerificationCodeFromMessages(
   account: MailApiIcuAccount,
   messages: MailApiIcuMessage[],
+  options: EmailVerificationCodeRequestOptions = {},
 ) {
   return findLatestVerificationMail(
     messages.map((message) => ({
@@ -292,6 +294,7 @@ function findVerificationCodeFromMessages(
     })),
     {
       targetEmail: account.email,
+      minTimestamp: options.minTimestamp,
     },
   );
 }
@@ -379,7 +382,7 @@ export function createMailApiIcuProvider() {
       emailAccountMap.set(account.email, account);
       return account.email;
     },
-    async getEmailVerificationCode(email: string) {
+    async getEmailVerificationCode(email: string, options: EmailVerificationCodeRequestOptions = {}) {
       const account = await resolveAccountForEmail(email);
 
       for (
@@ -392,7 +395,7 @@ export function createMailApiIcuProvider() {
         );
 
         const messages = await fetchMessages(account);
-        const matchedMail = findVerificationCodeFromMessages(account, messages);
+        const matchedMail = findVerificationCodeFromMessages(account, messages, options);
 
         if (matchedMail?.verificationCode) {
           console.log(`mailApiIcuOtpCode: ${matchedMail.verificationCode}`);

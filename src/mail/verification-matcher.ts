@@ -12,6 +12,7 @@ interface FindVerificationMailOptions<T> {
     targetEmail?: string;
     candidateMatcher?: (mail: T) => boolean;
     rememberLastCode?: boolean;
+    minTimestamp?: number;
 }
 
 const lastVerificationCodeByEmail = new Map<string, string>();
@@ -85,6 +86,13 @@ export function findLatestVerificationMail<T extends VerificationMailCandidate>(
 
         if (options.candidateMatcher && !options.candidateMatcher(mail)) {
             continue;
+        }
+
+        if (typeof options.minTimestamp === "number" && Number.isFinite(options.minTimestamp)) {
+            const candidateTimestamp = Number(mail.timestamp ?? 0);
+            if (!Number.isFinite(candidateTimestamp) || candidateTimestamp < options.minTimestamp) {
+                continue;
+            }
         }
 
         const verificationCode = collectCandidateTexts(mail)

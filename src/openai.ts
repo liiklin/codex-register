@@ -217,6 +217,7 @@ export class OpenAIClient {
     readonly smsBroker?: ISMSActivationBroker;
     private preAcquiredPhoneLease?: ActivationLease;
     private preAcquiredPhoneLeaseUsed = false;
+    private emailOtpNotBeforeMs = 0;
 
     constructor(options: OpenAIClientOptions) {
         this.smsBroker = options.smsBroker;
@@ -308,7 +309,7 @@ export class OpenAIClient {
                 }
 
                 if (this.smsBroker) {
-                    await this.smsBroker.markAsFailed(true);
+                    this.smsBroker.discardCurrentActivation?.();
                 }
 
                 if (!this.isPhoneMaxUsageExceededError(error) || attempt === 2) {
@@ -413,6 +414,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/email-verification`) {
+            this.markEmailOtpPhaseStart();
             this.logProgress(4, totalSteps, "提交邮箱验证码");
             continueURL = await this.emailOtpValidate();
         }
@@ -473,6 +475,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/email-verification`) {
+            this.markEmailOtpPhaseStart();
             totalSteps += 1;
             this.logProgress(step++, totalSteps, "提交邮箱验证码");
             continueURL = await this.emailOtpValidate();
@@ -528,6 +531,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/email-verification`) {
+            this.markEmailOtpPhaseStart();
             totalSteps += 1;
             this.logProgress(step++, totalSteps, "提交邮箱验证码");
             continueURL = await this.emailOtpValidate();
@@ -894,7 +898,13 @@ export class OpenAIClient {
             return this.promptEmailOtp();
         }
         console.log(`autoEmailOtp: provider=${MAILBOX_CONFIG.provider} targetEmail=${this.email}`);
-        return getEmailVerificationCode(this.email);
+        return getEmailVerificationCode(this.email, {
+            minTimestamp: this.emailOtpNotBeforeMs || undefined,
+        });
+    }
+
+    private markEmailOtpPhaseStart(): void {
+        this.emailOtpNotBeforeMs = Date.now();
     }
 
     private async generateRegisterEmail(): Promise<string> {
