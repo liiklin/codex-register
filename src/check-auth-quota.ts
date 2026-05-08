@@ -628,6 +628,14 @@ async function summarizeAuth(filePath: string, forceRefresh: boolean): Promise<A
     }, forceRefresh);
 }
 
+function shouldDisableAuthTarget(target: AuthTarget, plan: string, remainingPercent: number): boolean {
+    if (target.filePath.startsWith("cpa:")) {
+        return plan === "free" && remainingPercent <= 0;
+    }
+
+    return remainingPercent <= 5;
+}
+
 export async function summarizeAuthTarget(target: AuthTarget, forceRefresh: boolean): Promise<AuthSummary> {
     const filePath = target.filePath;
     let record = target.loadRecord ? await target.loadRecord() : {};
@@ -744,27 +752,29 @@ export async function summarizeAuthTarget(target: AuthTarget, forceRefresh: bool
     const payload = parseJson<UsagePayload>(probe.body);
     const primary = payload?.rate_limit?.primary_window;
     const remainingPercent = parsePercent(formatRemaining(primary?.used_percent));
+    const resolvedPlan = payload?.plan_type?.trim() || localPlan;
     const note =
         probe.status === 200
             ? "请求成功"
             : message;
 
     if (probe.status === 200 && target.setDisabled && remainingPercent != null) {
-        if (remainingPercent <= 5 && target.currentDisabled !== true) {
+        const shouldDisable = shouldDisableAuthTarget(target, resolvedPlan, remainingPercent);
+        if (shouldDisable && target.currentDisabled !== true) {
             await target.setDisabled(true);
             target.currentDisabled = true;
-            console.log(`authDisabled: ${filePath} remaining=${remainingPercent.toFixed(2)}%`);
-        } else if (remainingPercent > 5 && target.currentDisabled === true) {
+            console.log(`authDisabled: ${filePath} plan=${resolvedPlan} remaining=${remainingPercent.toFixed(2)}%`);
+        } else if (!shouldDisable && target.currentDisabled === true) {
             await target.setDisabled(false);
             target.currentDisabled = false;
-            console.log(`authEnabled: ${filePath} remaining=${remainingPercent.toFixed(2)}%`);
+            console.log(`authEnabled: ${filePath} plan=${resolvedPlan} remaining=${remainingPercent.toFixed(2)}%`);
         }
     }
 
     return {
         file: maskPath(filePath),
         email,
-        plan: payload?.plan_type?.trim() || localPlan,
+        plan: resolvedPlan,
         status: probe.status === 200 ? "ok" : `http_${probe.status}`,
         ok: probe.status === 200,
         used: formatPercent(primary?.used_percent),
