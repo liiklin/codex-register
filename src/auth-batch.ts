@@ -65,6 +65,20 @@ export async function loadAuthBatchEmails(providerName: string, cwd = process.cw
   return entries.map((entry) => entry.email);
 }
 
+export async function findAuthBatchEntryByEmail(
+  providerName: string,
+  email: string,
+  cwd = process.cwd(),
+): Promise<AuthBatchEntry | null> {
+  const normalizedTarget = email.trim().toLowerCase();
+  if (!normalizedTarget) {
+    return null;
+  }
+
+  const entries = await loadAuthBatchEntries(providerName, cwd);
+  return entries.find((entry) => entry.email.trim().toLowerCase() === normalizedTarget) ?? null;
+}
+
 function parseAuthBatchEntryLine(line: string): AuthBatchEntry | null {
   const trimmedLine = line.trim();
   if (!trimmedLine) {

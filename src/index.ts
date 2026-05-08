@@ -1,5 +1,5 @@
 import {appConfig} from "./config.js";
-import {type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
+import {findAuthBatchEntryByEmail, type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed, registerEmailAccountBinding} from "./mailbox.js";
 import {readManualSmsActivationArgs} from "./manual-sms-activation.js";
@@ -139,11 +139,25 @@ async function runAuthForEmail(email: string, manualOtp: boolean): Promise<void>
     }
 }
 
-async function runAuthForBatchEntry(entry: AuthBatchEntry, manualOtp: boolean): Promise<void> {
+async function prepareAuthEntryContext(entry: AuthBatchEntry | null): Promise<void> {
+    if (!entry) {
+        return;
+    }
+
     registerEmailAccountBinding({
         email: entry.email,
         lineRaw: entry.lineRaw,
     });
+}
+
+async function prepareSingleAuthContext(email: string): Promise<void> {
+    const matchedEntry = await findAuthBatchEntryByEmail(appConfig.provider, email)
+        .catch(() => null);
+    await prepareAuthEntryContext(matchedEntry);
+}
+
+async function runAuthForBatchEntry(entry: AuthBatchEntry, manualOtp: boolean): Promise<void> {
+    await prepareAuthEntryContext(entry);
     await runAuthForEmail(entry.email, manualOtp);
 }
 
@@ -248,6 +262,7 @@ async function main() {
             throw new Error("使用 --auth 时必须同时指定 --email");
         }
         try {
+            await prepareSingleAuthContext(manualEmail);
             await runAuthForEmail(manualEmail, manualOtp);
         } catch (error) {
             console.error(`[❌️授权失败]`, error);
