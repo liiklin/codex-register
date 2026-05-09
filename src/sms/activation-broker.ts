@@ -453,7 +453,17 @@ export class ActivationBroker<
             rawStatus: verification.rawStatus,
           };
         } catch (e) {
-          await this.markAsFailed(e instanceof HeroSmsWaitTimeoutError ? false : undefined);
+          if (e instanceof HeroSmsWaitTimeoutError) {
+            try {
+              await this.markAsFailed(true);
+            } catch (releaseError) {
+              console.warn(
+                `[pollSMSCode] 短信等待超时后释放 activation 失败 activationId=${activation.activationId}: ${String(releaseError instanceof Error ? releaseError.message : releaseError)}`,
+              );
+            }
+          } else {
+            await this.markAsFailed();
+          }
           throw e;
         }
       },
