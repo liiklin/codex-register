@@ -125,7 +125,12 @@ function isUserAlreadyExistsError(error: unknown): boolean {
 
 function isMailApiIcuAuthFailedError(error: unknown): boolean {
     return collectErrorTexts(error)
-        .some((text) => text.includes("MailAPI.ICU 请求失败: 401") || text.includes("邮箱认证失败"));
+        .some((text) =>
+            text.includes("MailAPI.ICU 请求失败: 401")
+            || text.includes("邮箱认证失败")
+            || text.includes("EmailOtpValidate请求失败: 403 code=account_deactivated")
+            || text.includes("code=account_deactivated"),
+        );
 }
 
 function isMailApiIcuOtpMissingError(error: unknown): boolean {

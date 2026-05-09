@@ -30,7 +30,7 @@ import {getEmailAddress, getEmailVerificationCode, MAILBOX_CONFIG} from "./mailb
 import {fetchSentinelToken} from "./sentinel.js";
 import { pkceCodeChallenge, randomUrlSafeString } from "./utils.js";
 import {ActivationLease, ISMSActivationBroker} from "./sms/activation-broker.js";
-import {HeroSmsWaitTimeoutError} from "./sms/heroSMS.js";
+import {HeroSmsMaxPriceExhaustedError, HeroSmsWaitTimeoutError} from "./sms/heroSMS.js";
 
 type FetchLike = typeof fetch;
 
@@ -301,22 +301,12 @@ export class OpenAIClient {
                     this.isPhoneMaxUsageExceededError(error) ||
                     this.isPhoneNumberInUseError(error)
                 );
-                const shouldDiscardAndRetry = attempt < 2 && this.isFraudGuardError(error);
-
                 if (shouldRotateAndRetry) {
                     const reason = this.isPhoneMaxUsageExceededError(error)
                         ? "phone_max_usage_exceed"
                         : "phone_number_in_use";
                     console.log(`[add-phone] 号码 ${phoneNumber} 触发 ${reason}，准备轮换新号码重试`);
                     await this.smsBroker.markAsFailed(true);
-                    lease = await this.smsBroker.getActivation();
-                    console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
-                    continue;
-                }
-
-                if (shouldDiscardAndRetry) {
-                    console.log(`[add-phone] 号码 ${phoneNumber} 触发 fraud_guard，准备丢弃当前 activation 并换号重试`);
-                    this.smsBroker?.discardCurrentActivation?.();
                     lease = await this.smsBroker.getActivation();
                     console.log(`[add-phone] 已轮换到新号码 phone=+${lease.phoneNumber}`);
                     continue;
@@ -341,37 +331,45 @@ export class OpenAIClient {
         submitCurrent: number | string;
         total: number;
     }): Promise<string> {
-        let lastTimeoutError: HeroSmsWaitTimeoutError | null = null;
+        let lastRoundError: unknown = null;
 
         for (let round = 1; round <= PHONE_VERIFICATION_MAX_ROUNDS; round += 1) {
-            const {continueURL, lease} = await this.requestPhoneOtpWithRetry({
-                current: progress.sendCurrent,
-                total: progress.total,
-            });
-
-            this.logProgress(
-                progress.waitCurrent,
-                progress.total,
-                round > 1 ? `等待短信验证码，第 ${round} 轮` : "等待短信验证码",
-            );
-
             try {
+                const {continueURL, lease} = await this.requestPhoneOtpWithRetry({
+                    current: progress.sendCurrent,
+                    total: progress.total,
+                });
+
+                this.logProgress(
+                    progress.waitCurrent,
+                    progress.total,
+                    round > 1 ? `等待短信验证码，第 ${round} 轮` : "等待短信验证码",
+                );
+
                 const {code} = await lease.waitForVerificationCode();
                 this.logProgress(progress.submitCurrent, progress.total, `提交短信验证，code=[${code}]`);
                 return await this.validatePhone(code, continueURL);
             } catch (error) {
-                if (!(error instanceof HeroSmsWaitTimeoutError) || round === PHONE_VERIFICATION_MAX_ROUNDS) {
+                if (!this.isRetryablePhoneVerificationRoundError(error) || round === PHONE_VERIFICATION_MAX_ROUNDS) {
                     throw error;
                 }
 
-                lastTimeoutError = error;
+                lastRoundError = error;
                 console.log(
-                    `[pollSMSCode] 短信轮询超时，准备继续下一轮发码与接码 round=${round + 1}/${PHONE_VERIFICATION_MAX_ROUNDS}`,
+                    `[pollSMSCode] 当前轮失败，准备继续下一轮发码与接码 round=${round + 1}/${PHONE_VERIFICATION_MAX_ROUNDS} error=${this.describeRetryError(error)}`,
                 );
             }
         }
 
-        throw lastTimeoutError ?? new Error("短信验证码验证失败");
+        throw lastRoundError ?? new Error("短信验证码验证失败");
+    }
+
+    private isRetryablePhoneVerificationRoundError(error: unknown): boolean {
+        return error instanceof HeroSmsWaitTimeoutError
+            || error instanceof HeroSmsMaxPriceExhaustedError
+            || this.isFraudGuardError(error)
+            || this.isPhoneMaxUsageExceededError(error)
+            || this.isPhoneNumberInUseError(error);
     }
 
     async authLoginHTTP(): Promise<AuthLoginResult> {

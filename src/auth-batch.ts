@@ -102,7 +102,7 @@ function parseAuthBatchEntryLine(line: string): AuthBatchEntry | null {
   };
 }
 
-async function removeAuthBatchEntryFromSourceFile(
+export async function removeAuthBatchEntryFromSourceFile(
   providerName: string,
   entry: AuthBatchEntry,
   cwd = process.cwd(),

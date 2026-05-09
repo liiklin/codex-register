@@ -1,5 +1,6 @@
 import {appConfig} from "./config.js";
-import {findAuthBatchEntryByEmail, type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
+import {findAuthBatchEntryByEmail, removeAuthBatchEntryFromSourceFile, type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
+import {isMailApiIcuAuthFailedError, isUserAlreadyExistsError} from "./auth-failure.js";
 import {listNormalizedAuthEmailsFromCLIProxyAPI, shouldAutoUploadAuthToCLIProxyAPI} from "./cliproxyapi.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed, registerEmailAccountBinding} from "./mailbox.js";
@@ -29,47 +30,6 @@ function readNumberArg(flag: string): number | null {
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function collectErrorTexts(error: unknown, seen = new Set<unknown>()): string[] {
-    if (error == null || seen.has(error)) {
-        return [];
-    }
-
-    seen.add(error);
-
-    if (typeof error === "string") {
-        return [error];
-    }
-
-    if (Array.isArray(error)) {
-        return error.flatMap((item) => collectErrorTexts(item, seen));
-    }
-
-    if (error && typeof error === "object" && !(error instanceof Error)) {
-        const record = error as Record<string, unknown>;
-        const candidateKeys = ["code", "errorCode", "type", "message"];
-        const directValues = candidateKeys.flatMap((key) => collectErrorTexts(record[key], seen));
-        const nestedErrorValues = record.error && typeof record.error === "object"
-            ? candidateKeys.flatMap((key) => collectErrorTexts((record.error as Record<string, unknown>)[key], seen))
-            : [];
-        return [...directValues, ...nestedErrorValues].filter(Boolean);
-    }
-
-    if (error instanceof Error) {
-        const enumerableSource = Object.assign<Record<string, unknown>, Error>({}, error);
-        const candidateKeys = ["code", "errorCode", "type", "message", "body", "details", "response"];
-        const directValues = candidateKeys.flatMap((key) => collectErrorTexts(enumerableSource[key], seen));
-
-        return [
-            error.message,
-            ...directValues,
-            ...(error.cause ? collectErrorTexts(error.cause, seen) : []),
-        ].filter(Boolean);
-    }
-
-    return [];
-}
-
-
 const smsBroker = appConfig.heroSMSApiKey ? createSMSBroker({
     apiKey: appConfig.heroSMSApiKey,
     pollAttempts: appConfig.heroSMSPollAttempts,
@@ -79,16 +39,6 @@ const smsBroker = appConfig.heroSMSApiKey ? createSMSBroker({
     priceStep: appConfig.heroSMSPriceStep,
     country: appConfig.heroSMSCountry,
 }) : undefined
-
-function isUserAlreadyExistsError(error: unknown): boolean {
-    return collectErrorTexts(error)
-        .some((text) => /(?:^|\W)(?:code=)?user_already_exists(?:$|\W)/i.test(text));
-}
-
-function isMailApiIcuAuthFailedError(error: unknown): boolean {
-    return collectErrorTexts(error)
-        .some((text) => text.includes("MailAPI.ICU 请求失败: 401") || text.includes("邮箱认证失败"));
-}
 
 async function createManualSmsLeaseIfProvided() {
     const manualSmsActivation = readManualSmsActivationArgs(process.argv);
@@ -128,8 +78,19 @@ async function runAuthForEmail(email: string, manualOtp: boolean): Promise<void>
         );
     } catch (error) {
         await finalizeManualSmsLeaseIfProvided(client, smsBroker, preAcquiredPhoneLease);
+        if (client.email && isMailApiIcuAuthFailedError(error)) {
+            await discardEmailAddress(client.email);
+        }
         throw error;
     }
+}
+
+async function discardBatchEntryIfNeeded(entry: AuthBatchEntry | null): Promise<void> {
+    if (!entry) {
+        return;
+    }
+
+    await removeAuthBatchEntryFromSourceFile(appConfig.provider, entry);
 }
 
 async function prepareAuthEntryContext(entry: AuthBatchEntry | null): Promise<void> {
@@ -151,7 +112,14 @@ async function prepareSingleAuthContext(email: string): Promise<void> {
 
 async function runAuthForBatchEntry(entry: AuthBatchEntry, manualOtp: boolean): Promise<void> {
     await prepareAuthEntryContext(entry);
-    await runAuthForEmail(entry.email, manualOtp);
+    try {
+        await runAuthForEmail(entry.email, manualOtp);
+    } catch (error) {
+        if (isMailApiIcuAuthFailedError(error)) {
+            await discardBatchEntryIfNeeded(entry);
+        }
+        throw error;
+    }
 }
 
 async function createRemoteAuthExistsCheckerIfNeeded(): Promise<((entry: AuthBatchEntry) => Promise<boolean>) | undefined> {
