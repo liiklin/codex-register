@@ -1,7 +1,8 @@
-import {readFile} from "node:fs/promises";
+import {appendFile, mkdir, readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
 
 const REG_ACCOUNTS_FILE_NAME = "reg_accounts.txt";
+const AUTHORIZED_ACCOUNTS_FILE_NAME = "authorized_accounts.txt";
 
 export interface AuthBatchEntry {
   email: string;
@@ -24,6 +25,10 @@ export interface RunAuthBatchDeps {
 
 export function resolveAuthBatchFilePath(providerName: string, cwd = process.cwd()): string {
   return path.resolve(cwd, providerName, REG_ACCOUNTS_FILE_NAME);
+}
+
+export function resolveAuthorizedAuthBatchFilePath(providerName: string, cwd = process.cwd()): string {
+  return path.resolve(cwd, providerName, AUTHORIZED_ACCOUNTS_FILE_NAME);
 }
 
 export async function loadAuthBatchEntries(providerName: string, cwd = process.cwd()): Promise<AuthBatchEntry[]> {
@@ -96,6 +101,81 @@ function parseAuthBatchEntryLine(line: string): AuthBatchEntry | null {
   };
 }
 
+async function removeAuthBatchEntryFromSourceFile(
+  providerName: string,
+  entry: AuthBatchEntry,
+  cwd = process.cwd(),
+): Promise<boolean> {
+  const filePath = resolveAuthBatchFilePath(providerName, cwd);
+  const raw = await readFile(filePath, "utf8");
+  const lines = raw.split(/\r?\n/);
+  if (lines.length > 0 && lines.at(-1) === "") {
+    lines.pop();
+  }
+
+  let removed = false;
+  const nextLines = lines.filter((line) => {
+    if (removed) {
+      return true;
+    }
+    if (line.trim() === entry.lineRaw.trim()) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (!removed) {
+    return false;
+  }
+
+  await writeFile(
+    filePath,
+    `${nextLines.join("\n")}${nextLines.length > 0 ? "\n" : ""}`,
+    "utf8",
+  );
+  return true;
+}
+
+async function appendAuthBatchEntryToAuthorizedFile(
+  providerName: string,
+  entry: AuthBatchEntry,
+  cwd = process.cwd(),
+): Promise<void> {
+  const filePath = resolveAuthorizedAuthBatchFilePath(providerName, cwd);
+  await mkdir(path.dirname(filePath), {recursive: true});
+  let prefix = "";
+  try {
+    const existing = await readFile(filePath, "utf8");
+    const existingLines = existing.split(/\r?\n/).map((line) => line.trim());
+    if (existingLines.includes(entry.lineRaw.trim())) {
+      return;
+    }
+    if (existing.length > 0 && !existing.endsWith("\n")) {
+      prefix = "\n";
+    }
+  } catch (error) {
+    const normalizedError = error as NodeJS.ErrnoException;
+    if (normalizedError.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  await appendFile(filePath, `${prefix}${entry.lineRaw}\n`, "utf8");
+}
+
+async function archiveSuccessfulAuthBatchEntry(
+  providerName: string,
+  entry: AuthBatchEntry,
+  cwd = process.cwd(),
+): Promise<void> {
+  await appendAuthBatchEntryToAuthorizedFile(providerName, entry, cwd);
+  const removed = await removeAuthBatchEntryFromSourceFile(providerName, entry, cwd);
+  if (!removed) {
+    throw new Error(`批量授权成功后未能从源文件移除账号: ${entry.email}`);
+  }
+}
+
 export async function runAuthBatchWithDeps(deps: RunAuthBatchDeps): Promise<AuthBatchSummary> {
   const entries = await loadAuthBatchEntries(deps.providerName, deps.cwd);
   const log = deps.log ?? console.log;
@@ -111,6 +191,7 @@ export async function runAuthBatchWithDeps(deps: RunAuthBatchDeps): Promise<Auth
     log(`[${index + 1}/${entries.length}] 开始授权 ${entry.email}`);
     try {
       await deps.runAuthForEmail(entry);
+      await archiveSuccessfulAuthBatchEntry(deps.providerName, entry, deps.cwd);
       successCount += 1;
     } catch (reason) {
       failCount += 1;
