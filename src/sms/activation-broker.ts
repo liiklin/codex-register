@@ -62,6 +62,8 @@ export interface ISMSActivationBroker {
   useExistingActivation?(activation: SmsActivation): Promise<ActivationLease>;
   markAsSucceed(): Promise<void>;
   markAsFailed(rotate?: boolean): Promise<void>;
+  completeCurrentActivationIfMatches?(activationId: string): Promise<boolean>;
+  completeCurrentActivation?(): Promise<string>;
   discardCurrentActivation?(): void;
 }
 
@@ -315,6 +317,19 @@ export class ActivationBroker<
       }
       throw error;
     }
+  }
+
+  async completeCurrentActivationIfMatches(activationId: string): Promise<boolean> {
+    if (!this.currentActivation) {
+      return false;
+    }
+
+    if (String(this.currentActivation.activationId) !== String(activationId)) {
+      return false;
+    }
+
+    await this.completeCurrentActivation();
+    return true;
   }
 
   async cancelCurrentActivation(): Promise<string> {

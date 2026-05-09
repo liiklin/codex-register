@@ -1,5 +1,15 @@
 import type {SmsActivation} from "./sms/provider.js";
 
+export interface ManualSmsLeaseCleanupClient {
+  didUsePreAcquiredPhoneLease(): boolean;
+}
+
+export interface ManualSmsLeaseCleanupBroker {
+  completeCurrentActivationIfMatches?(activationId: string): Promise<boolean>;
+  completeCurrentActivation?(): Promise<string>;
+  discardCurrentActivation?(): void | Promise<void>;
+}
+
 export function readManualSmsActivationArgs(argv: string[]): SmsActivation | null {
   const activationId = readArgValue(argv, "--sms-activation-id").trim();
   const rawPhone = readArgValue(argv, "--sms-phone").trim();
@@ -21,6 +31,42 @@ export function readManualSmsActivationArgs(argv: string[]): SmsActivation | nul
     activationId,
     phoneNumber,
   };
+}
+
+export async function finalizeManualSmsLeaseIfProvided(
+  client: ManualSmsLeaseCleanupClient,
+  broker: ManualSmsLeaseCleanupBroker | undefined,
+  manualLease: SmsActivation | null | undefined,
+): Promise<void> {
+  if (!manualLease) {
+    return;
+  }
+
+  if (client.didUsePreAcquiredPhoneLease()) {
+    try {
+      const completed = await broker?.completeCurrentActivationIfMatches?.(String(manualLease.activationId));
+      if (completed === false) {
+        return;
+      }
+      if (completed == null) {
+        await broker?.completeCurrentActivation?.();
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      if (text.includes("当前没有可用 activation")) {
+        return;
+      }
+      console.warn(`[manual-sms] 清理已使用的手动 activation 失败: ${text}`);
+    }
+    return;
+  }
+
+  try {
+    await broker?.discardCurrentActivation?.();
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    console.warn(`[manual-sms] 丢弃未使用的手动 activation 失败: ${text}`);
+  }
 }
 
 function readArgValue(argv: string[], flag: string): string {

@@ -2,7 +2,7 @@ import {appConfig} from "./config.js";
 import {findAuthBatchEntryByEmail, type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed, registerEmailAccountBinding} from "./mailbox.js";
-import {readManualSmsActivationArgs} from "./manual-sms-activation.js";
+import {finalizeManualSmsLeaseIfProvided, readManualSmsActivationArgs} from "./manual-sms-activation.js";
 import {OpenAIClient} from "./openai.js";
 import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
 import {createSMSBroker} from "./sms/index.js";
@@ -102,14 +102,6 @@ async function createManualSmsLeaseIfProvided() {
     return await smsBroker.useExistingActivation(manualSmsActivation);
 }
 
-async function discardUnusedManualSmsLeaseIfNeeded(client: OpenAIClient, manualLeaseProvided: boolean): Promise<void> {
-    if (!manualLeaseProvided || client.didUsePreAcquiredPhoneLease()) {
-        return;
-    }
-
-    smsBroker?.discardCurrentActivation?.();
-}
-
 function ensureManualSmsActivationNotUsedWithAuthBatch(): void {
     if (readManualSmsActivationArgs(process.argv)) {
         throw new Error("--auth-batch 暂不支持 --sms-activation-id 和 --sms-phone");
@@ -129,12 +121,12 @@ async function runAuthForEmail(email: string, manualOtp: boolean): Promise<void>
     });
     try {
         const result = await client.authLoginHTTP();
-        await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
+        await finalizeManualSmsLeaseIfProvided(client, smsBroker, preAcquiredPhoneLease);
         console.log(
             `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
         );
     } catch (error) {
-        await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
+        await finalizeManualSmsLeaseIfProvided(client, smsBroker, preAcquiredPhoneLease);
         throw error;
     }
 }
@@ -182,7 +174,7 @@ async function runOnce(): Promise<void> {
         try {
             result = await client.authRegisterAndAuthorizeHTTP();
         } catch (error) {
-            await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
+            await finalizeManualSmsLeaseIfProvided(client, smsBroker, preAcquiredPhoneLease);
             if (shouldRecycleGeneratedMailApiAccount && client.email) {
                 if (isUserAlreadyExistsError(error) || isMailApiIcuAuthFailedError(error)) {
                     await discardEmailAddress(client.email);
@@ -193,7 +185,7 @@ async function runOnce(): Promise<void> {
         if (shouldRecycleGeneratedMailApiAccount && client.email) {
             await markEmailAddressUsed(client.email, appConfig.defaultPassword);
         }
-        await discardUnusedManualSmsLeaseIfNeeded(client, Boolean(preAcquiredPhoneLease));
+        await finalizeManualSmsLeaseIfProvided(client, smsBroker, preAcquiredPhoneLease);
         console.log(
             `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
         );
@@ -231,7 +223,7 @@ async function runOnce(): Promise<void> {
     try {
         result = await loginClient.authLoginHTTP();
     } catch (error) {
-        await discardUnusedManualSmsLeaseIfNeeded(loginClient, Boolean(preAcquiredPhoneLease));
+        await finalizeManualSmsLeaseIfProvided(loginClient, smsBroker, preAcquiredPhoneLease);
         if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
             if (isMailApiIcuAuthFailedError(error)) {
                 await discardEmailAddress(loginClient.email);
@@ -242,7 +234,7 @@ async function runOnce(): Promise<void> {
     if (shouldRecycleGeneratedMailApiAccount && loginClient.email) {
         await markEmailAddressUsed(loginClient.email, appConfig.defaultPassword);
     }
-    await discardUnusedManualSmsLeaseIfNeeded(loginClient, Boolean(preAcquiredPhoneLease));
+    await finalizeManualSmsLeaseIfProvided(loginClient, smsBroker, preAcquiredPhoneLease);
     console.log(
         `[✅️授权成功] 邮箱：${loginClient.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
     );
