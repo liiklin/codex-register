@@ -18,6 +18,7 @@ export interface AuthBatchSummary {
 export interface RunAuthBatchDeps {
   providerName: string;
   runAuthForEmail: (entry: AuthBatchEntry) => Promise<void>;
+  isAlreadyAuthorized?: (entry: AuthBatchEntry) => Promise<boolean>;
   cwd?: string;
   log?: (message: string) => void;
   error?: (message: string, error: unknown) => void;
@@ -188,6 +189,14 @@ export async function runAuthBatchWithDeps(deps: RunAuthBatchDeps): Promise<Auth
 
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
+
+    if (await deps.isAlreadyAuthorized?.(entry)) {
+      log(`[${index + 1}/${entries.length}] 系统已存在，跳过授权 ${entry.email}`);
+      await archiveSuccessfulAuthBatchEntry(deps.providerName, entry, deps.cwd);
+      successCount += 1;
+      continue;
+    }
+
     log(`[${index + 1}/${entries.length}] 开始授权 ${entry.email}`);
     try {
       await deps.runAuthForEmail(entry);

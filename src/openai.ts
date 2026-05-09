@@ -1058,7 +1058,7 @@ export class OpenAIClient {
 
         const accessClaims = this.decodeJwtPayload<JwtPayload>(payload.access_token);
         const idClaims = this.decodeJwtPayload<JwtPayload>(payload.id_token);
-        const email = idClaims.email ?? accessClaims.email ?? this.email;
+        const email = String(idClaims.email ?? accessClaims.email ?? this.email).trim().toLowerCase();
         const accountID =
             accessClaims["https://api.openai.com/auth"]?.chatgpt_account_id ??
             idClaims["https://api.openai.com/auth"]?.chatgpt_account_id ??
@@ -1124,7 +1124,7 @@ export class OpenAIClient {
             `${now.getMonth() + 1}`.padStart(2, "0"),
             `${now.getDate()}`.padStart(2, "0"),
         ].join("-");
-        const safeEmail = record.email.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+        const safeEmail = record.email.toLowerCase().replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
         const fileName = `${date}-${safeEmail}.json`;
         const filePath = path.join(authDir, fileName);
         await writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, "utf8");

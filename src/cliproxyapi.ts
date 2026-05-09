@@ -36,6 +36,16 @@ export interface CLIProxyAuthFileItem {
     [key: string]: unknown;
 }
 
+export function extractNormalizedEmailFromAuthFileName(fileName: string): string | null {
+    const trimmed = String(fileName ?? "").trim();
+    const match = trimmed.match(/^\d{4}-\d{2}-\d{2}-(.+)\.json$/i);
+    if (!match) {
+        return null;
+    }
+    const email = String(match[1] ?? "").trim();
+    return email.includes("@") ? email.toLowerCase() : null;
+}
+
 export function shouldAutoUploadAuthToCLIProxyAPI(): boolean {
     return appConfig.cliproxyApiAutoUploadAuth;
 }
@@ -61,6 +71,18 @@ export async function listAuthFilesFromCLIProxyAPI(): Promise<CLIProxyAuthFileIt
             }))
             .filter((item) => item.name)
         : [];
+}
+
+export async function listNormalizedAuthEmailsFromCLIProxyAPI(): Promise<Set<string>> {
+    const files = await listAuthFilesFromCLIProxyAPI();
+    const emails = new Set<string>();
+    for (const file of files) {
+        const normalizedEmail = extractNormalizedEmailFromAuthFileName(file.name);
+        if (normalizedEmail) {
+            emails.add(normalizedEmail);
+        }
+    }
+    return emails;
 }
 
 export async function downloadAuthFileJsonObjectFromCLIProxyAPI(name: string): Promise<Record<string, unknown>> {

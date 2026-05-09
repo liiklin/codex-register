@@ -1,5 +1,6 @@
 import {appConfig} from "./config.js";
 import {findAuthBatchEntryByEmail, type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
+import {listNormalizedAuthEmailsFromCLIProxyAPI, shouldAutoUploadAuthToCLIProxyAPI} from "./cliproxyapi.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed, registerEmailAccountBinding} from "./mailbox.js";
 import {finalizeManualSmsLeaseIfProvided, readManualSmsActivationArgs} from "./manual-sms-activation.js";
@@ -153,6 +154,15 @@ async function runAuthForBatchEntry(entry: AuthBatchEntry, manualOtp: boolean): 
     await runAuthForEmail(entry.email, manualOtp);
 }
 
+async function createRemoteAuthExistsCheckerIfNeeded(): Promise<((entry: AuthBatchEntry) => Promise<boolean>) | undefined> {
+    if (!shouldAutoUploadAuthToCLIProxyAPI()) {
+        return undefined;
+    }
+
+    const existingEmails = await listNormalizedAuthEmailsFromCLIProxyAPI();
+    return async (entry: AuthBatchEntry) => existingEmails.has(entry.email.trim().toLowerCase());
+}
+
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
     const manualOtp = hasFlag("--otp");
@@ -269,8 +279,10 @@ async function main() {
         }
 
         ensureManualSmsActivationNotUsedWithAuthBatch();
+        const isAlreadyAuthorized = await createRemoteAuthExistsCheckerIfNeeded();
         await runAuthBatchWithDeps({
             providerName: appConfig.provider,
+            isAlreadyAuthorized,
             runAuthForEmail: async (entry) => {
                 await runAuthForBatchEntry(entry, manualOtp);
             },
