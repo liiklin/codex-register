@@ -1,13 +1,14 @@
 import {appConfig} from "./config.js";
 import {findAuthBatchEntryByEmail, removeAuthBatchEntryFromSourceFile, type AuthBatchEntry, runAuthBatchWithDeps} from "./auth-batch.js";
-import {isMailApiIcuAuthFailedError, isUserAlreadyExistsError} from "./auth-failure.js";
+import {isMailApiIcuAuthFailedError, isUserAlreadyExistsError, shouldRemoveAuthBatchEntryOnAuthFailure} from "./auth-failure.js";
 import {listNormalizedAuthEmailsFromCLIProxyAPI, shouldAutoUploadAuthToCLIProxyAPI} from "./cliproxyapi.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed, registerEmailAccountBinding} from "./mailbox.js";
 import {finalizeManualSmsLeaseIfProvided, readManualSmsActivationArgs} from "./manual-sms-activation.js";
 import {OpenAIClient} from "./openai.js";
 import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
-import {createSMSBroker} from "./sms/index.js";
+import {SmsBowerMaxPriceExhaustedError} from "./sms/smsBower.js";
+import {createConfiguredSMSBroker} from "./sms/index.js";
 
 function readArgValue(flag: string): string {
     const index = process.argv.indexOf(flag);
@@ -30,15 +31,7 @@ function readNumberArg(flag: string): number | null {
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-const smsBroker = appConfig.heroSMSApiKey ? createSMSBroker({
-    apiKey: appConfig.heroSMSApiKey,
-    pollAttempts: appConfig.heroSMSPollAttempts,
-    pollIntervalMs: appConfig.heroSMSPollIntervalMs,
-    basePrice: appConfig.heroSMSBasePrice,
-    maxPrice: appConfig.heroSMSMaxPrice,
-    priceStep: appConfig.heroSMSPriceStep,
-    country: appConfig.heroSMSCountry,
-}) : undefined
+const smsBroker = createConfiguredSMSBroker()
 
 async function createManualSmsLeaseIfProvided() {
     const manualSmsActivation = readManualSmsActivationArgs(process.argv);
@@ -47,7 +40,7 @@ async function createManualSmsLeaseIfProvided() {
     }
 
     if (!smsBroker?.useExistingActivation) {
-        throw new Error("使用 --sms-activation-id 和 --sms-phone 时必须已配置可用的 HeroSMS broker");
+        throw new Error("使用 --sms-activation-id 和 --sms-phone 时必须已配置可用的 SMS broker");
     }
 
     return await smsBroker.useExistingActivation(manualSmsActivation);
@@ -110,11 +103,22 @@ async function prepareSingleAuthContext(email: string): Promise<void> {
     await prepareAuthEntryContext(matchedEntry);
 }
 
+async function discardAuthBatchEntryByEmailIfNeeded(email: string, error: unknown): Promise<void> {
+    if (!email || !shouldRemoveAuthBatchEntryOnAuthFailure(error)) {
+        return;
+    }
+
+    const entry = await findAuthBatchEntryByEmail(appConfig.provider, email)
+        .catch(() => null);
+    await discardBatchEntryIfNeeded(entry);
+}
+
 async function runAuthForBatchEntry(entry: AuthBatchEntry, manualOtp: boolean): Promise<void> {
     await prepareAuthEntryContext(entry);
     try {
         await runAuthForEmail(entry.email, manualOtp);
     } catch (error) {
+        await discardAuthBatchEntryByEmailIfNeeded(entry.email, error);
         if (isMailApiIcuAuthFailedError(error)) {
             await discardBatchEntryIfNeeded(entry);
         }
@@ -278,8 +282,8 @@ async function main() {
         } catch (error) {
             failCount += 1;
             console.error(`[❌️授权失败]`, error);
-            if (error instanceof HeroSmsMaxPriceExhaustedError) {
-                console.log(`[停止] HeroSMS 已达到最大报价仍无号码，结束自动循环`);
+            if (error instanceof HeroSmsMaxPriceExhaustedError || error instanceof SmsBowerMaxPriceExhaustedError) {
+                console.log(`[停止] 短信提供商已达到最大报价仍无号码，结束自动循环`);
                 break;
             }
         }

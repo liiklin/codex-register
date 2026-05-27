@@ -2,19 +2,10 @@ import {appConfig} from "./config.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {discardEmailAddress, markEmailAddressUsed} from "./mailbox.js";
 import {OpenAIClient} from "./openai.js";
-import {ActivationLease, ISMSActivationBroker} from "./sms/activation-broker.js";
+import {ActivationLease} from "./sms/activation-broker.js";
 import {HeroSmsMaxPriceExhaustedError} from "./sms/heroSMS.js";
-import {createSMSBroker} from "./sms/index.js";
-
-interface SMSBrokerConfigOverride {
-    apiKey?: string;
-    pollAttempts?: number;
-    pollIntervalMs?: number;
-    basePrice?: number;
-    maxPrice?: number;
-    priceStep?: number;
-    country?: number;
-}
+import {SmsBowerMaxPriceExhaustedError} from "./sms/smsBower.js";
+import {createConfiguredSMSBroker} from "./sms/index.js";
 
 export interface PhoneFirstAttemptResult {
     status: "success" | "no_number" | "retry";
@@ -174,23 +165,6 @@ async function discardCurrentActivationIfPossible(discardCurrentActivation?: () 
     }
 }
 
-export function createConfiguredSMSBroker(configOverride: SMSBrokerConfigOverride = {}): ISMSActivationBroker | undefined {
-    const apiKey = configOverride.apiKey ?? appConfig.heroSMSApiKey;
-    if (!apiKey) {
-        return undefined;
-    }
-
-    return createSMSBroker({
-        apiKey,
-        pollAttempts: configOverride.pollAttempts ?? appConfig.heroSMSPollAttempts,
-        pollIntervalMs: configOverride.pollIntervalMs ?? appConfig.heroSMSPollIntervalMs,
-        basePrice: configOverride.basePrice ?? appConfig.heroSMSBasePrice,
-        maxPrice: configOverride.maxPrice ?? appConfig.heroSMSMaxPrice,
-        priceStep: configOverride.priceStep ?? appConfig.heroSMSPriceStep,
-        country: configOverride.country ?? appConfig.heroSMSCountry,
-    });
-}
-
 export async function runPhoneFirstLoop(options: RunPhoneFirstLoopOptions): Promise<void> {
     const log = options.log ?? console.log;
     const sleepFn = options.sleep ?? sleep;
@@ -217,7 +191,7 @@ export async function acquirePhoneThenRegisterWithDeps(deps: AcquirePhoneThenReg
     try {
         lease = await deps.getLease();
     } catch (error) {
-        if (error instanceof HeroSmsMaxPriceExhaustedError) {
+        if (error instanceof HeroSmsMaxPriceExhaustedError || error instanceof SmsBowerMaxPriceExhaustedError) {
             return {status: "no_number"};
         }
         throw error;
@@ -281,7 +255,7 @@ async function runPhoneFirstRegister(): Promise<PhoneFirstAttemptResult> {
 
     const smsBroker = createConfiguredSMSBroker();
     if (!smsBroker) {
-        throw new Error("phone-first 模式要求已配置 HeroSMS");
+        throw new Error("phone-first 模式要求已配置 HeroSMS 或 smsBower");
     }
 
     return acquirePhoneThenRegisterWithDeps({

@@ -4,6 +4,7 @@ import type {
   SmsVerificationCode,
 } from "./provider.js";
 import {HeroSmsApiError, HeroSmsWaitTimeoutError} from "./heroSMS.js";
+import {SmsBowerApiError, SmsBowerWaitTimeoutError} from "./smsBower.js";
 
 const ACTIVATION_CANCEL_AND_WITHDRAW_MIN_AGE_MS = 2 * 60 * 1000;
 
@@ -468,7 +469,7 @@ export class ActivationBroker<
             rawStatus: verification.rawStatus,
           };
         } catch (e) {
-          if (e instanceof HeroSmsWaitTimeoutError) {
+          if (e instanceof HeroSmsWaitTimeoutError || e instanceof SmsBowerWaitTimeoutError) {
             try {
               await this.markAsFailed(true);
             } catch (releaseError) {
@@ -516,11 +517,16 @@ export class ActivationBroker<
   }
 
   private shouldDiscardAfterReleaseDenial(error: unknown): boolean {
-    return error instanceof HeroSmsApiError
-      && error.payload != null
-      && typeof error.payload === "object"
-      && "title" in error.payload
-      && String((error.payload as {title?: unknown}).title ?? "").trim() === "EARLY_CANCEL_DENIED";
+    if (error instanceof HeroSmsApiError) {
+      return error.payload != null
+        && typeof error.payload === "object"
+        && "title" in error.payload
+        && String((error.payload as {title?: unknown}).title ?? "").trim() === "EARLY_CANCEL_DENIED";
+    }
+    if (error instanceof SmsBowerApiError) {
+      return String(error.payload ?? "").trim() === "EARLY_CANCEL_DENIED";
+    }
+    return false;
   }
 
   private getPhoneStats(phoneNumber: string): PhoneUsageStats {

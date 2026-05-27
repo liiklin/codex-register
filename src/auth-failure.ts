@@ -52,3 +52,13 @@ export function isMailApiIcuAuthFailedError(error: unknown): boolean {
             || text.includes("code=account_deactivated"),
         );
 }
+
+export function isInvalidatedAuthTokenError(error: unknown): boolean {
+    return collectErrorTexts(error)
+        .some((text) => text.includes("Your authentication token has been invalidated"));
+}
+
+export function shouldRemoveAuthBatchEntryOnAuthFailure(error: unknown): boolean {
+    return collectErrorTexts(error)
+        .some((text) => text.includes("PasswordVerify请求失败: 401 code=invalid_username_or_password"));
+}

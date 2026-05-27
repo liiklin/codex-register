@@ -3,8 +3,11 @@ import path from "node:path";
 
 export type MailProviderName = "2925" | "gmail" | "proxiedmail" | "cloudflare" | "hotmail" | "gptmail" | "mailapi-icu" | "freemail";
 
+export type SmsProviderName = "heroSMS" | "smsBower";
+
 interface AppConfigFile {
     provider?: unknown;
+    smsProvider?: unknown;
     defaultPassword?: unknown;
     loopDelayMs?: unknown;
     gmailAccessToken?: unknown;
@@ -27,6 +30,13 @@ interface AppConfigFile {
     heroSMSPriceStep?: unknown;
     heroSMSPollAttempts?: unknown;
     heroSMSPollIntervalMs?: unknown;
+    smsBowerApiKey?: unknown;
+    smsBowerCountry?: unknown;
+    smsBowerBasePrice?: unknown;
+    smsBowerMaxPrice?: unknown;
+    smsBowerPriceStep?: unknown;
+    smsBowerPollAttempts?: unknown;
+    smsBowerPollIntervalMs?: unknown;
     cliproxyApiAutoUploadAuth?: unknown;
     cliproxyApiBaseUrl?: unknown;
     cliproxyApiManagementKey?: unknown;
@@ -37,6 +47,7 @@ interface AppConfigFile {
 
 export interface AppConfig {
     provider: MailProviderName;
+    smsProvider?: SmsProviderName;
     defaultPassword: string;
     loopDelayMs: number;
     gmailAccessToken: string;
@@ -59,6 +70,13 @@ export interface AppConfig {
     heroSMSPriceStep: number;
     heroSMSPollAttempts: number;
     heroSMSPollIntervalMs: number;
+    smsBowerApiKey?: string;
+    smsBowerCountry: number;
+    smsBowerBasePrice: number;
+    smsBowerMaxPrice: number;
+    smsBowerPriceStep: number;
+    smsBowerPollAttempts: number;
+    smsBowerPollIntervalMs: number;
     cliproxyApiAutoUploadAuth: boolean;
     cliproxyApiBaseUrl: string;
     cliproxyApiManagementKey: string;
@@ -69,6 +87,7 @@ export interface AppConfig {
 
 const DEFAULT_CONFIG: AppConfig = {
     provider: "proxiedmail",
+    smsProvider: undefined,
     defaultPassword: "kuaileshifu88",
     loopDelayMs: 120000,
     gmailAccessToken: "",
@@ -91,6 +110,13 @@ const DEFAULT_CONFIG: AppConfig = {
     heroSMSPriceStep: 0.01,
     heroSMSPollAttempts: 10,
     heroSMSPollIntervalMs: 3000,
+    smsBowerApiKey: undefined,
+    smsBowerCountry: 44,
+    smsBowerBasePrice: 0.05,
+    smsBowerMaxPrice: 0.05,
+    smsBowerPriceStep: 0.01,
+    smsBowerPollAttempts: 24,
+    smsBowerPollIntervalMs: 5000,
     cliproxyApiAutoUploadAuth: false,
     cliproxyApiBaseUrl: "http://localhost:8317",
     cliproxyApiManagementKey: "",
@@ -116,6 +142,13 @@ function normalizeProvider(value: unknown): MailProviderName {
         return value;
     }
     return DEFAULT_CONFIG.provider;
+}
+
+function normalizeSmsProvider(value: unknown): SmsProviderName | undefined {
+    if (value === "heroSMS" || value === "smsBower") {
+        return value;
+    }
+    return undefined;
 }
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
@@ -163,6 +196,7 @@ function loadConfig(): AppConfig {
 
     return {
         provider: normalizeProvider(parsed.provider),
+        smsProvider: normalizeSmsProvider(parsed.smsProvider),
         defaultPassword:
             typeof parsed.defaultPassword === "string" && parsed.defaultPassword.trim()
                 ? parsed.defaultPassword
@@ -239,6 +273,34 @@ function loadConfig(): AppConfig {
           typeof parsed.heroSMSPollIntervalMs === "number"
             ? parsed.heroSMSPollIntervalMs
             : DEFAULT_CONFIG.heroSMSPollIntervalMs,
+        smsBowerApiKey:
+          typeof parsed.smsBowerApiKey === "string"
+            ? parsed.smsBowerApiKey.trim()
+            : DEFAULT_CONFIG.smsBowerApiKey,
+        smsBowerCountry:
+          typeof parsed.smsBowerCountry === "number"
+            ? parsed.smsBowerCountry
+            : DEFAULT_CONFIG.smsBowerCountry,
+        smsBowerBasePrice:
+          typeof parsed.smsBowerBasePrice === "number"
+            ? parsed.smsBowerBasePrice
+            : DEFAULT_CONFIG.smsBowerBasePrice,
+        smsBowerMaxPrice:
+          typeof parsed.smsBowerMaxPrice === "number"
+            ? parsed.smsBowerMaxPrice
+            : DEFAULT_CONFIG.smsBowerMaxPrice,
+        smsBowerPriceStep:
+          typeof parsed.smsBowerPriceStep === "number"
+            ? parsed.smsBowerPriceStep
+            : DEFAULT_CONFIG.smsBowerPriceStep,
+        smsBowerPollAttempts:
+          typeof parsed.smsBowerPollAttempts === "number"
+            ? parsed.smsBowerPollAttempts
+            : DEFAULT_CONFIG.smsBowerPollAttempts,
+        smsBowerPollIntervalMs:
+          typeof parsed.smsBowerPollIntervalMs === "number"
+            ? parsed.smsBowerPollIntervalMs
+            : DEFAULT_CONFIG.smsBowerPollIntervalMs,
         cliproxyApiAutoUploadAuth: normalizeBoolean(
             parsed.cliproxyApiAutoUploadAuth,
             DEFAULT_CONFIG.cliproxyApiAutoUploadAuth,

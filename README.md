@@ -95,14 +95,16 @@ npm run start:phone-first
 
 这个模式会：
 
-1. 先按 `heroSMSBasePrice ~ heroSMSMaxPrice` 尝试申请号码
+1. 先按短信渠道尝试申请号码（HeroSMS 或 SmsBower）
 2. 拿到号后再进入注册
 3. 如果当前轮没有可用号码，则等待 `loopDelayMs` 后继续下一轮
 
 说明：
 
 - 旧的 `npm run dev` / `npm run start` 行为完全不变
-- phone-first 模式依赖已配置的 `heroSMSApiKey`
+- phone-first 模式通过 `smsProvider` 配置项指定短信渠道：
+  - `"heroSMS"` — 需配置 `heroSMSApiKey`（默认）
+  - `"smsBower"` — 需配置 `smsBowerApiKey`
 - 默认仍沿用原注册方式：先注册、再登录授权；只有传 `--sign` 才走直接注册授权
 - `phone-first` 命令不支持 `--auth`，登录授权请继续使用原有 `dev/start -- --auth`
 
@@ -610,6 +612,36 @@ Cloudflare Worker 部署说明见：[MAIL_WORKER_DEPLOY.md](./MAIL_WORKER_DEPLOY
     - CLIProxyAPI 管理地址，例如 `http://localhost:8317`
 - `cliproxyApiManagementKey`
     - CLIProxyAPI 的 `MANAGEMENT_KEY`
+- `smsProvider`
+    - 短信接码提供商，可选 `"heroSMS"`（默认）或 `"smsBower"`
+- `heroSMSApiKey`
+    - HeroSMS API Key，短信接码渠道首选
+- `heroSMSCountry`
+    - HeroSMS 国家代码，默认 `52`
+- `heroSMSBasePrice`
+    - HeroSMS 号码初始报价
+- `heroSMSMaxPrice`
+    - HeroSMS 号码最高报价
+- `heroSMSPriceStep`
+    - HeroSMS 无号时报价递增步长
+- `heroSMSPollAttempts`
+    - HeroSMS 轮询验证码次数
+- `heroSMSPollIntervalMs`
+    - HeroSMS 轮询间隔（毫秒）
+- `smsBowerApiKey`
+    - SmsBower API Key，未配 HeroSMS 时自动降级使用
+- `smsBowerCountry`
+    - SmsBower 国家代码，默认 `44`
+- `smsBowerBasePrice`
+    - SmsBower 号码初始报价
+- `smsBowerMaxPrice`
+    - SmsBower 号码最高报价
+- `smsBowerPriceStep`
+    - SmsBower 无号时报价递增步长
+- `smsBowerPollAttempts`
+    - SmsBower 轮询验证码次数，默认 `24`
+- `smsBowerPollIntervalMs`
+    - SmsBower 轮询间隔（毫秒），默认 `5000`
 
 ## CLIProxyAPI 自动上传 auth
 

@@ -18,6 +18,7 @@ import {
     setAuthFileDisabledStatusToCPATools,
     type CPAToolsAuthFileItem,
 } from "./cpatoolsapi.js";
+import {isInvalidatedAuthTokenError} from "./auth-failure.js";
 import {appConfig} from "./config.js";
 import {AUTH_OAUTH_TOKEN_URLS, DEFAULT_CLIENT_ID, DEFAULT_USER_AGENT} from "./constants.js";
 
@@ -313,6 +314,10 @@ function extractMessage(rawBody: string): string {
 
 function shouldMoveTo401(message: string): boolean {
     return message.toLowerCase().includes("deactivated");
+}
+
+export function shouldTryRefreshAfter401(error: unknown): boolean {
+    return isInvalidatedAuthTokenError(error);
 }
 
 function formatPercent(value: number | undefined): string {
@@ -713,7 +718,7 @@ export async function summarizeAuthTarget(target: AuthTarget, forceRefresh: bool
                     };
                 }
             }
-        } else if (!target.probeUsage) {
+        } else if (!target.probeUsage && shouldTryRefreshAfter401(message)) {
             const refreshed = await refreshAccessToken(record);
             if (refreshed.record) {
                 record = refreshed.record;
@@ -722,7 +727,7 @@ export async function summarizeAuthTarget(target: AuthTarget, forceRefresh: bool
                 message = extractMessage(probe.body);
             } else {
                 message = refreshed.error || message;
-                if (refreshed.status === 401 && target.moveTo401) {
+                if (target.moveTo401) {
                     try {
                         movedTo401 = await target.moveTo401();
                     } catch (error) {

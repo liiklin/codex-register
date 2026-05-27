@@ -484,7 +484,7 @@ function normalizePrice(value: unknown, fallback: number): number {
   if (!Number.isFinite(parsed) || parsed < 0) {
     return fallback;
   }
-  return Math.round(parsed * 100) / 100;
+  return Math.round(parsed * 1e5) / 1e5;
 }
 
 function resolveDynamicBasePrice(config: HeroSmsProviderConfig): number {
@@ -917,7 +917,7 @@ export function createHeroSmsProvider(config: HeroSmsProviderConfig) {
     const previousPrice = currentDynamicMaxPrice;
     currentDynamicMaxPrice = Math.min(
       dynamicMaxPrice,
-      Math.round((currentDynamicMaxPrice + dynamicPriceStep) * 100) / 100,
+      Math.round((currentDynamicMaxPrice + dynamicPriceStep) * 1e5) / 1e5,
     );
     console.log(
       `[heroSMS] NO_NUMBERS，动态上调 maxPrice: ${previousPrice.toFixed(2)} -> ${currentDynamicMaxPrice.toFixed(2)}`,
